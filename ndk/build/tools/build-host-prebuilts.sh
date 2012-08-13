@@ -73,7 +73,9 @@ if [ ! -d "$SRC_DIR" ]; then
 fi
 
 if [ ! -f "$SRC_DIR/build/configure" -o ! -d "$SRC_DIR/gcc/gcc-$DEFAULT_GCC_VERSION" ]; then
-    echo "ERROR: This is not the top of a toolchain tree: $SRC_DIR"
+    echo "ERROR: The file $SRC_DIR/build/configure or"
+    echo "       the directory $SRC_DIR/gcc/gcc-$DEFAULT_GCC_VERSION does not exist"
+    echo "This is not the top of a toolchain tree: $SRC_DIR"
     echo "You must give the path to a copy of the toolchain source directories"
     echo "created by 'download-toolchain-sources.sh."
     exit 1
@@ -108,7 +110,7 @@ if [ "$VERBOSE2" = "yes" ]; then
     FLAGS=$FLAGS" --verbose"
 fi
 if [ "$TRY64" = "yes" ]; then
-    FLAGS=$FLAGS" --try64"
+    FLAGS=$FLAGS" --try-64"
 else
     force_32bit_binaries
 fi
@@ -237,15 +239,17 @@ for SYSTEM in $SYSTEMS; do
 
     # Then the toolchains
     for ARCH in $ARCHS; do
-        TOOLCHAIN_NAME=$(get_default_toolchain_name_for_arch $ARCH)
-        if [ -z "$TOOLCHAIN_NAME" ]; then
+        TOOLCHAIN_NAMES=$(get_toolchain_name_list_for_arch $ARCH)
+        if [ -z "$TOOLCHAIN_NAMES" ]; then
             echo "ERROR: Invalid architecture name: $ARCH"
             exit 1
         fi
 
-        echo "Building $SYSTEM toolchain for $ARCH architecture: $TOOLCHAIN_NAME"
-        run $BUILDTOOLS/build-gcc.sh "$SRC_DIR" "$NDK_DIR" $TOOLCHAIN_NAME $TOOLCHAIN_FLAGS
-        fail_panic "Could not build $TOOLCHAIN_NAME-$SYSTEM!"
+        for TOOLCHAIN_NAME in $TOOLCHAIN_NAMES; do
+            echo "Building $SYSTEM toolchain for $ARCH architecture: $TOOLCHAIN_NAME"
+            run $BUILDTOOLS/build-gcc.sh "$SRC_DIR" "$NDK_DIR" $TOOLCHAIN_NAME $TOOLCHAIN_FLAGS
+            fail_panic "Could not build $TOOLCHAIN_NAME-$SYSTEM!"
+        done
     done
 
     # We're done for this system

@@ -618,6 +618,25 @@ LOCAL_DISABLE_NO_EXECUTE
         http://en.wikipedia.org/wiki/NX_bit
         http://www.gentoo.org/proj/en/hardened/gnu-stack.xml
 
+LOCAL_DISABLE_RELRO
+    By default, NDK compiled code is built with read-only relocations
+    and GOT protection.  This instructs the runtime linker to mark
+    certain regions of memory as being read-only after relocation,
+    making certain security exploits (such as GOT overwrites) harder
+    to perform.
+
+    It is enabled by default, but you can disable it if you *really*
+    need to by setting this variable to 'true'.
+
+    NOTE: These protections are only effective on newer Android devices
+          ("Jelly Bean" and beyond). The code will still run on older
+          versions (albeit without memory protections).
+
+    For more information, see:
+
+        http://isisblogs.poly.edu/2011/06/01/relro-relocation-read-only/
+        http://www.akkadia.org/drepper/nonselsec.pdf (section 6)
+
 LOCAL_EXPORT_CFLAGS
     Define this variable to record a set of C/C++ compiler flags that will
     be added to the LOCAL_CFLAGS definition of any other module that uses
@@ -685,6 +704,27 @@ LOCAL_EXPORT_LDLIBS
     command to indicate that it depends on the system logging library,
     because it depends on 'foo'.
 
+LOCAL_SHORT_COMMANDS
+    Set this variable to 'true' when your module has a very high number of
+    sources and/or dependent static or shared libraries. This forces the
+    build system to use an intermediate list file, and use it with the
+    library archiver or static linker with the @$(listfile) syntax.
+
+    This can be useful on Windows, where the command-line only accepts
+    a maximum of 8191 characters, which can be too small for complex
+    projects.
+
+    This also impacts the compilation of individual source files, placing
+    nearly all compiler flags inside list files too.
+
+    Note that any other value than 'true' will revert to the default
+    behaviour. You can also define APP_SHORT_COMMANDS in your
+    Application.mk to force this behaviour for all modules in your
+    project.
+
+    NOTE: We do not recommend enabling this feature by default, since it
+          makes the build slower.
+
 LOCAL_FILTER_ASM
     Define this variable to a shell command that will be used to filter
     the assembly files from, or generated from, your LOCAL_SRC_FILES.
@@ -715,4 +755,9 @@ LOCAL_FILTER_ASM
 
         myasmfilter $OBJS_DIR/foo.S.original $OBJS_DIR/foo.S
         myasmfilter bar.S $OBJS_DIR/bar.S
+
+NDK_TOOLCHAIN_VERSION
+    Define this variable to either 4.4.3 or 4.6 to select version of GCC compiler.
+    4.6 is the default
+
 </pre></body></html>

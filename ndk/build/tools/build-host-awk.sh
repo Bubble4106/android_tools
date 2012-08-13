@@ -61,7 +61,9 @@ fi
 
 log "Configuring the build"
 mkdir -p $BUILD_DIR && rm -rf $BUILD_DIR/*
+prepare_mingw_toolchain $BUILD_DIR
 log "Building $HOST_TAG awk"
+export HOST_CC="$CC" &&
 run $GNUMAKE \
     -C "$AWK_SRCDIR" \
     -j $NUM_JOBS \

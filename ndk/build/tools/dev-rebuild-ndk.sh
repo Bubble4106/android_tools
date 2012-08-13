@@ -33,7 +33,7 @@ PROGDIR=`cd $PROGDIR && pwd`
 
 
 # Name of this NDK release
-OPTION_NDK_RELEASE="r6x-eng"
+OPTION_NDK_RELEASE=`date +%Y%m%d`
 register_var_option "--release=<rel_name>" OPTION_NDK_RELEASE "Version of release"
 
 # Should we only Build for Linux platform?
@@ -41,7 +41,7 @@ OPTION_QUICK_BUILD="no"
 register_var_option "--quick" OPTION_QUICK_BUILD "Only build the Linux basics"
 
 # List of toolchains to package
-OPTION_TOOLCHAINS="$DEFAULT_ARCH_TOOLCHAIN_NAME_arm,$DEFAULT_ARCH_TOOLCHAIN_NAME_x86"
+OPTION_TOOLCHAINS="$DEFAULT_ARCH_TOOLCHAIN_NAME_arm,$DEFAULT_ARCH_TOOLCHAIN_NAME_x86,$DEFAULT_ARCH_TOOLCHAIN_NAME_mips"
 register_var_option "--toolchains=<toolchain[,toolchain]>" OPTION_TOOLCHAINS "Toolchain(s) to package"
 
 # # Name of the Mac OS Build host
@@ -62,7 +62,11 @@ HOST_OS=`uname -s | tr '[:upper:]' '[:lower:]'`
 case "$HOST_OS" in
 linux )
     # Build for Local Linux and Cross-compile for Windows (MINGW)
-    BUILD_TARGET_PLATFORMS="linux-x86 windows"
+    if [ "$OPTION_QUICK_BUILD" = "yes" ]; then
+       BUILD_TARGET_PLATFORMS="linux-x86"
+    else
+       BUILD_TARGET_PLATFORMS="linux-x86 windows"
+    fi
     ;;
 darwin )
     # Build for Local Mac OS X
@@ -125,12 +129,9 @@ else
 fi
 
 
-ALL_ARCH=""
-for ARCH in arm x86
+ARCHS="arm x86 mips"
+for ARCH in $ARCHS
 do
-    # Collect all Arch types for packaging
-    ALL_ARCH="${ALL_ARCH} $ARCH"
-
     # Set the Arch specific variables
     case "$ARCH" in
     arm )
@@ -140,7 +141,7 @@ do
         unset GDB_VERSION
         unset BINUTILS_VERSION
         ;;
-    x86 )
+    x86|mips )
         PRODUCT=generic_$ARCH
         ;;
     esac
@@ -152,61 +153,60 @@ do
         echo >&2 Rebuild for $PRODUCT first... or change PRODUCT in $0.
         exit 1
     fi
-
-    # Build the platform
-    echo
-    echo "$ARCH: Build the ndk/platforms directory"
-    logfile="$TOP/$ARCH.build-platforms.log"
-    rotate_log $logfile
-    $PROGDIR/build-platforms.sh \
-        $VERBOSE \
-        --arch=$ARCH --no-symlinks --no-samples > $logfile 2>&1
-    fail_panic "build-platforms.sh failed. Logfile in $logfile"
-
-
-    logfile="$TOP/$ARCH.rebuild-all.log"
-    rotate_log $logfile
-
-    # Rebuild all prebuilts for the arch type and platforms
-    for TARGET_PLATFORM in ${BUILD_TARGET_PLATFORMS}
-    do
-        # Set the Arch specific variables
-        case "$TARGET_PLATFORM" in
-        linux-x86 )
-            TARGET_PLATFORM_OS="Linux"
-            TARGET_PLATFORM_FLAGS=""
-            ;;
-        windows )
-            TARGET_PLATFORM_OS="Windows"
-            TARGET_PLATFORM_FLAGS="--mingw"
-            # Skip this Target Platform in Quick Build Mode
-            if [ "$OPTION_QUICK_BUILD" = "yes" ]; then break ; fi
-            ;;
-        darwin-x86 )
-            TARGET_PLATFORM_OS="Mac OS X"
-            TARGET_PLATFORM_FLAGS=""
-#            TARGET_PLATFORM_FLAGS="--darwin-ssh=$MAC_BUILD_HOST"
-#            # Skip this Target Platform in Quick Build Mode
-#            if [ "$OPTION_QUICK_BUILD" = "yes" ]; then break ; fi
-            ;;
-        esac
-
-        # Rebuilt all prebuilts for the arch type
-        echo
-        echo "$ARCH: Rebuilding the toolchain and prebuilt tarballs for $TARGET_PLATFORM_OS"
-        cd $TOP
-        $PROGDIR/rebuild-all-prebuilt.sh \
-            --arch=$ARCH \
-            --toolchain-src-dir=$NDK_SRC_DIR \
-            --package-dir=$PACKAGE_DIR \
-            $MPFR_VERSION $GDB_VERSION $BINUTILS_VERSION \
-            $TARGET_PLATFORM_FLAGS \
-            $VERBOSE >> $logfile 2>&1
-        fail_panic "rebuild-all-prebuilt.sh failed. Logfile in $logfile"
-    done # with TARGET_PLATFORM
 done # with ARCH
 
-ALL_ARCH=`echo $ALL_ARCH`
+# Build the platform
+echo
+echo "Build the ndk/platforms directory"
+logfile="$TOP/build-platforms.log"
+rotate_log $logfile
+$PROGDIR/build-platforms.sh \
+    $VERBOSE \
+    --arch=$(spaces_to_commas $ARCHS)  \
+    --no-symlinks --no-samples > $logfile 2>&1
+fail_panic "build-platforms.sh failed. Logfile in $logfile"
+
+logfile="$TOP/rebuild-all.log"
+rotate_log $logfile
+
+# Rebuild all prebuilts for archs and platforms
+for TARGET_PLATFORM in ${BUILD_TARGET_PLATFORMS}
+do
+    # Set the Arch specific variables
+    case "$TARGET_PLATFORM" in
+    linux-x86 )
+        TARGET_PLATFORM_OS="Linux"
+        TARGET_PLATFORM_FLAGS="--systems=$TARGET_PLATFORM"
+        ;;
+    windows )
+        TARGET_PLATFORM_OS="Windows"
+        TARGET_PLATFORM_FLAGS="--systems=$TARGET_PLATFORM"
+        # Skip this Target Platform in Quick Build Mode
+        if [ "$OPTION_QUICK_BUILD" = "yes" ]; then break ; fi
+        ;;
+    darwin-x86 )
+        TARGET_PLATFORM_OS="Mac OS X"
+        TARGET_PLATFORM_FLAGS=""
+#        TARGET_PLATFORM_FLAGS="--darwin-ssh=$MAC_BUILD_HOST"
+#        # Skip this Target Platform in Quick Build Mode
+#        if [ "$OPTION_QUICK_BUILD" = "yes" ]; then break ; fi
+        ;;
+    esac
+
+    # Rebuilt all prebuilts for the arch type
+    echo
+    echo "Rebuilding the toolchain and prebuilt tarballs for $TARGET_PLATFORM_OS"
+    cd $TOP
+    $PROGDIR/rebuild-all-prebuilt.sh \
+        --arch=$(spaces_to_commas $ARCHS)  \
+        --package-dir=$PACKAGE_DIR \
+        $MPFR_VERSION $GDB_VERSION $BINUTILS_VERSION \
+        $TARGET_PLATFORM_FLAGS \
+        $VERBOSE \
+        $NDK_SRC_DIR >> $logfile 2>&1
+    fail_panic "rebuild-all-prebuilt.sh failed. Logfile in $logfile"
+done # with TARGET_PLATFORM
+
 ALL_SYSTEMS=`echo ${BUILD_TARGET_PLATFORMS}`
 
 echo
@@ -218,8 +218,7 @@ $PROGDIR/package-release.sh \
     --prebuilt-dir=$PACKAGE_DIR \
     --systems="$ALL_SYSTEMS" \
     --out-dir=$PACKAGE_DIR \
-    --arch="$ALL_ARCH" \
-    --toolchains="${OPTION_TOOLCHAINS}" \
+    --arch=$(spaces_to_commas $ARCHS)  \
     --prefix=android-ndk-${OPTION_NDK_RELEASE} \
     --no-git \
     $VERBOSE > $logfile 2>&1

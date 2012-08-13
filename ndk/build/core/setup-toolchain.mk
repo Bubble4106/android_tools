@@ -34,7 +34,28 @@ ifndef NDK_TOOLCHAIN
     # Select the last toolchain from the sorted list.
     # For now, this is enough to select armeabi-4.4.0 by default for ARM
     TARGET_TOOLCHAIN := $(lastword $(TARGET_TOOLCHAIN_LIST))
-    $(call ndk_log,Using target toolchain '$(TARGET_TOOLCHAIN)' for '$(TARGET_ARCH_ABI)' ABI)
+
+    # If NDK_TOOLCHAIN_VERSION is defined, we replace the toolchain version
+    # suffix with it.
+    #
+    ifdef NDK_TOOLCHAIN_VERSION
+        # We assume the toolchain name uses dashes (-) as separators and doesn't
+        # contain any space. The following is a bit subtle, but essentially
+        # does the following:
+        #
+        #   1/ Use 'subst' to convert dashes into spaces, this generates a list
+        #   2/ Use 'chop' to remove the last element of the list
+        #   3/ Use 'subst' again to convert the spaces back into dashes
+        #
+        # So it TARGET_TOOLCHAIN is 'foo-bar-zoo-xxx', then
+        # TARGET_TOOLCHAIN_BASE will be 'foo-bar-zoo'
+        #
+        TARGET_TOOLCHAIN_BASE := $(subst $(space),-,$(call chop,$(subst -,$(space),$(TARGET_TOOLCHAIN))))
+        TARGET_TOOLCHAIN := $(TARGET_TOOLCHAIN_BASE)-$(NDK_TOOLCHAIN_VERSION)
+        $(call ndk_log,Using target toolchain '$(TARGET_TOOLCHAIN)' for '$(TARGET_ARCH_ABI)' ABI (through NDK_TOOLCHAIN_VERSION))
+    else
+        $(call ndk_log,Using target toolchain '$(TARGET_TOOLCHAIN)' for '$(TARGET_ARCH_ABI)' ABI)
+    endif
 else # NDK_TOOLCHAIN is not empty
     TARGET_TOOLCHAIN_LIST := $(strip $(filter $(NDK_TOOLCHAIN),$(NDK_ABI.$(TARGET_ARCH_ABI).toolchains)))
     ifndef TARGET_TOOLCHAIN_LIST
@@ -71,6 +92,7 @@ TARGET_PREBUILT_SHARED_LIBRARIES :=
 # Define default values for TOOLCHAIN_NAME, this can be overriden in
 # the setup file.
 TOOLCHAIN_NAME   := $(TARGET_TOOLCHAIN)
+TOOLCHAIN_VERSION := $(call last,$(subst -,$(space),$(TARGET_TOOLCHAIN)))
 
 # Define the root path of the toolchain in the NDK tree.
 TOOLCHAIN_ROOT   := $(NDK_ROOT)/toolchains/$(TOOLCHAIN_NAME)
@@ -93,7 +115,7 @@ include $(BUILD_SYSTEM)/default-build-commands.mk
 include $(NDK_TOOLCHAIN.$(TARGET_TOOLCHAIN).setup)
 
 # We expect the gdbserver binary for this toolchain to be located at its root.
-TARGET_GDBSERVER := $(TOOLCHAIN_ROOT)/prebuilt/gdbserver
+TARGET_GDBSERVER := $(NDK_ROOT)/prebuilt/android-$(TARGET_ARCH)/gdbserver/gdbserver
 
 # compute NDK_APP_DST_DIR as the destination directory for the generated files
 NDK_APP_DST_DIR := $(NDK_APP_PROJECT_PATH)/libs/$(TARGET_ARCH_ABI)
@@ -102,9 +124,11 @@ clean-installed-binaries::
 
 # Ensure that for debuggable applications, gdbserver will be copied to
 # the proper location
-ifeq ($(NDK_APP_DEBUGGABLE),true)
 
 NDK_APP_GDBSERVER := $(NDK_APP_DST_DIR)/gdbserver
+NDK_APP_GDBSETUP := $(NDK_APP_DST_DIR)/gdb.setup
+
+ifeq ($(NDK_APP_DEBUGGABLE),true)
 
 installed_modules: $(NDK_APP_GDBSERVER)
 
@@ -118,7 +142,6 @@ $(NDK_APP_GDBSERVER): clean-installed-binaries
 	$(hide) $(call host-mkdir,$(PRIVATE_DST_DIR))
 	$(hide) $(call host-install,$(PRIVATE_SRC),$(PRIVATE_DST))
 
-NDK_APP_GDBSETUP := $(NDK_APP_DST_DIR)/gdb.setup
 installed_modules: $(NDK_APP_GDBSETUP)
 
 $(NDK_APP_GDBSETUP): PRIVATE_DST := $(NDK_APP_GDBSETUP)

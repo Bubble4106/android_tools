@@ -70,6 +70,9 @@ if [ -z "$ARCH" ]; then
         x86-*)
             ARCH=x86
             ;;
+        mips*)
+            ARCH=mips
+            ;;
         *)
             ARCH=arm
             ;;
@@ -89,6 +92,10 @@ if [ -z "$PLATFORM" ]; then
         arm) PLATFORM=android-3
             ;;
         x86)
+            PLATFORM=android-9
+            ;;
+        mips)
+            # Set it to android-9
             PLATFORM=android-9
             ;;
     esac
@@ -111,17 +118,7 @@ if [ ! -d "$TOOLCHAIN_PATH" ] ; then
 fi
 
 # Extract architecture from platform name
-case "$TOOLCHAIN_NAME" in
-    arm-*)
-        ;;
-    x86-*)
-        ;;
-    *)
-        echo "Unsupported toolchain name: $TOOLCHAIN_NAME"
-        echo "Name must start with arm- or x86- !"
-        exit 1
-        ;;
-esac
+parse_toolchain_name $TOOLCHAIN_NAME
 
 # Check that there are any platform files for it!
 (cd $NDK_DIR/platforms && ls -d */arch-${ARCH} >/dev/null 2>&1 )
@@ -167,8 +164,49 @@ dump "Copying sysroot headers and libraries..."
 run copy_directory_nolinks "$SRC_SYSROOT" "$TMPDIR/sysroot"
 
 dump "Copying libstdc++ headers and libraries..."
-`dirname $0`/copy-libstdcxx.sh --reverse "$TMPDIR" "$NDK_DIR" --toolchain=$TOOLCHAIN_NAME
-fail_panic "Could not copy libstdc++!"
+
+GNUSTL_DIR=$NDK_DIR/$GNUSTL_SUBDIR/$GCC_VERSION
+GNUSTL_LIBS=$GNUSTL_DIR/libs
+
+ABI_STL="$TMPDIR/$ABI_CONFIGURE_TARGET"
+ABI_STL_INCLUDE="$ABI_STL/include/c++/$GCC_VERSION"
+
+copy_directory "$GNUSTL_DIR/include" "$ABI_STL_INCLUDE"
+ABI_STL_INCLUDE_TARGET="$ABI_STL_INCLUDE/$ABI_CONFIGURE_TARGET"
+mkdir -p "$ABI_STL_INCLUDE_TARGET"
+fail_panic "Can't create directory: $ABI_STL_INCLUDE_TARGET"
+case "$ARCH" in
+    arm)
+        copy_directory "$GNUSTL_LIBS/armeabi/include/bits" "$ABI_STL_INCLUDE_TARGET/bits"
+        copy_file_list "$GNUSTL_LIBS/armeabi" "$ABI_STL/lib" "libgnustl_shared.so"
+        copy_file_list "$GNUSTL_LIBS/armeabi" "$ABI_STL/lib" "libsupc++.a"
+        cp "$GNUSTL_LIBS/armeabi/libgnustl_static.a" "$ABI_STL/lib/libstdc++.a"
+
+        copy_directory "$GNUSTL_LIBS/armeabi/include/bits" "$ABI_STL_INCLUDE_TARGET/thumb/bits"
+        copy_file_list "$GNUSTL_LIBS/armeabi" "$ABI_STL/lib/thumb" "libgnustl_shared.so"
+        copy_file_list "$GNUSTL_LIBS/armeabi" "$ABI_STL/lib/thumb" "libsupc++.a"
+        cp "$GNUSTL_LIBS/armeabi/libgnustl_static.a" "$ABI_STL/lib/thumb/libstdc++.a"
+
+        copy_directory "$GNUSTL_LIBS/armeabi-v7a/include/bits" "$ABI_STL_INCLUDE_TARGET/armv7-a/bits"
+        copy_file_list "$GNUSTL_LIBS/armeabi-v7a" "$ABI_STL/lib/armv7-a" "libgnustl_shared.so"
+        copy_file_list "$GNUSTL_LIBS/armeabi-v7a" "$ABI_STL/lib/armv7-a" "libsupc++.a"
+        cp "$GNUSTL_LIBS/armeabi-v7a/libgnustl_static.a" "$ABI_STL/lib/armv7-a/libstdc++.a"
+        ;;
+    x86)
+        copy_directory "$GNUSTL_LIBS/x86/include/bits" "$ABI_STL_INCLUDE_TARGET/bits"
+        copy_file_list "$GNUSTL_LIBS/x86" "$ABI_STL/lib" "libgnustl_shared.so"
+        copy_file_list "$GNUSTL_LIBS/x86" "$ABI_STL/lib" "libsupc++.a"
+        cp "$GNUSTL_LIBS/x86/libgnustl_static.a" "$ABI_STL/lib/libstdc++.a"
+        ;;
+    mips)
+        copy_directory "$GNUSTL_LIBS/mips/include/bits" "$ABI_STL_INCLUDE_TARGET/bits"
+        copy_file_list "$GNUSTL_LIBS/mips" "$ABI_STL/lib" "libgnustl_shared.so"
+        copy_file_list "$GNUSTL_LIBS/mips" "$ABI_STL/lib" "libsupc++.a"
+        cp "$GNUSTL_LIBS/mips/libgnustl_static.a" "$ABI_STL/lib/libstdc++.a"
+        ;;
+    *)
+        dump "ERROR: Unsupported NDK architecture!"
+esac
 
 # Install or Package
 if [ -n "$INSTALL_DIR" ] ; then

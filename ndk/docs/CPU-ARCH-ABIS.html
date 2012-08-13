@@ -168,6 +168,41 @@ Each supported ABI is identified by a unique name.
       Intel386 Processor Architecture Supplement
 
 
+ I.4. 'mips'
+ -----------
+
+  This is the name of an ABI for MIPS-based CPUs that support *at* *least*
+  the MIPS32r1 instruction set. The ABI includes the following features:
+
+   - MIPS32 revision 1 ISA
+   - Little-Endian
+   - O32
+   - Hard-Float
+   - no DSP application specific extensions
+
+  Please refer to following documentation for more details:
+
+   - ELF for the MIPS Architecture                    (a.k.a. MIPSELF)
+   - FAQ for MIPS Toolchains                          (a.k.a. MIPSFAQ)
+   - Toolchain Specifics                              (a.k.a. MIPSTOOL)
+   - SDE Library                                      (a.k.a. MIPSSDE)
+   - Instruction Set Quick Reference                  (a.k.a. MIPSISA)
+   - Architecture for Programmers                     (a.k.a. MIPSARCH)
+
+   - ELF System V Application Binary Interface
+     (DRAFT - 24 April 2001)
+   - Generic C++ ABI  (http://sourcery.mentor.com/public/cxx-abi/abi.html)
+
+  The MIPS specific documentation is available at:
+  http://www.mips.com/products/product-materials/processor/mips-architecture/
+  https://sourcery.mentor.com/sgpp/lite/mips/portal/target_arch?@action=faq&target_arch=MIPS
+
+  Note: This ABI assumes a CPU:FPU clock ratio of 2:1 for maximum
+  compatability.
+
+  Note: that MIPS16 support is not provided, nor is micromips.
+
+
 II. Generating code for a specific ABI:
 =======================================
 
@@ -224,12 +259,13 @@ native code in application packages.
     precisely by the steps described below; you will need to extract/install
     them manually in your application.
 
-    In the case of a "fat" binary, up to three distinct libraries can be placed
+    In the case of a "fat" binary, up to four distinct libraries can be placed
     in the  .apk, for example at:
 
         lib/armeabi/libfoo.so
         lib/armeabi-v7a/libfoo.so
         lib/x86/libfoo.so
+        lib/mips/libfoo.so
 
 
   III.2. Android Platform ABI support:
@@ -255,6 +291,7 @@ native code in application packages.
 
     A typical x86-based device only defines a primary abi named 'x86'.
 
+    A typical MIPS-based device only defines a primary abi named 'mips'.
 
   III.3. Automatic extraction of native code at install time:
   -----------------------------------------------------------

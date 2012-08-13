@@ -16,11 +16,12 @@ This document explains how to do that:
 ----------------------------
 
 Before anything else, you need to decide whether your standalone toolchain
-is going to target ARM-based devices, or x86-based one. Each architecture
-corresponds to a different toolchain name:
+is going to target ARM-based devices, x86-based, or MIPS-based one.
+Each architecture corresponds to a different toolchain name:
 
   * arm-linux-androideabi-4.4.3   => targetting ARM-based Android devices
   * x86-4.4.3                     => targetting x86-based Android devices
+  * mipsel-linux-android-4.4.3    => targetting MIPS-based Android devices
 
 2/ Selecting your sysroot:
 --------------------------
@@ -37,12 +38,13 @@ Usually, this will be something like:
    SYSROOT=$NDK/platforms/android-&lt;level&gt;/arch-&lt;arch&gt;/
 
 Where &lt;level&gt; is the API level number, and &lt;arch&gt; is the architecture
-("arm" and "x86" are the supported values). For example, if you're targeting
-Android 2.2 (a.k.a. Froyo), you would use:
+("arm", "x86", and "mips" are the supported values). For example, if you're
+targeting Android 2.2 (a.k.a. Froyo), you would use:
 
    SYSROOT=$NDK/platforms/android-8/arch-arm
 
 IMPORTANT: Note that only android-9 is supported for the x86 architecture.
+Note that android-9 and later are supported for the MIPS architecture.
 
 2/ Invoking the compiler (the hard way):
 ----------------------------------------
@@ -80,7 +82,8 @@ This will create a directory named /tmp/my-android-toolchain containing a
 copy of the android-5/arch-arm sysroot, and of the toolchain binaries.
 
 Note that by default, the ARM-based toolchain will be selected by the script.
-Use the '--arch=x86' option to specify the x86-based one, or alternatively
+Use the '--arch=x86' option to specify the x86-based one,
+use the '--arch=mips' option to specify the MIPS-based one, or alternatively
 '--toolchain=&lt;name&gt;'.
 
 You can later use it directly with something like:
@@ -140,7 +143,8 @@ If none of the above makes sense to you, it's probably better not to use
 the standalone toolchain, and stick to the NDK build system instead, which
 will handle all the details for you.
 
-You don't have to use any specific compiler flag when targetting the x86 ABI.
+You don't have to use any specific compiler flag when targetting the x86 ABI
+or the MIPS ABI.
 
 5/ Warnings and Limitations:
 --------------------------
@@ -193,11 +197,45 @@ NOTE: You will need to explicitly link with libsupc++ if you use these
     arm-linux-androideabi-g++ .... -lsupc++
 
 
-The toolchain also comes with a working GNU libstdc++ implementation, which
-provides a working C++ Standard Template Library implementation. You will
-need to explicitly link against -lstdc++ to use it.
+5.4/ C++ STL support:
+- - - - - - - - - - -
 
-Proper toolchain configuration to avoid these explicit link flags is
-planned for the future.
+The standalone toolchain also comes with a copy of the GNU libstdc++
+library, which provides an implementation of the C++ Standard Template
+Library. To use it, you however need to link with the proper library:
+
+  * Use -lstdc++ to link against the _static_ library version. This ensures
+    that all required C++ STL code is included into your final binary. This
+    is ideal if you are only generating a single shared library or executable.
+
+    This is the recommended way to do it.
+
+  * Use -lgnustl_shared to link against the _shared_ library version. This
+    is required if you have several related shared libraries or executables
+    that need to run in the same address space at runtime (some global variables
+    need to be defined uniquely, which is not possible if you link the static
+    libstdc++ against each one of your executables).
+
+    If you use this option, you need to ensure that libgnustl_shared.so is
+    also copied to your device for your code to load properly. The file is
+    at:
+
+      $TOOLCHAIN/arm-linux-androideabi/lib/  for ARM toolchains.
+      $TOOLCHAIN/i686-linux-android/lib/     for x86 ones.
+      $TOOLCHAIN/mipsel-linux-android/lib/   for MIPS toolchains.
+
+
+    IMPORTANT: The GNU libstdc++ is licensed under the GPLv3 with a
+               linking exception. See the following URL for details:
+
+          http://gcc.gnu.org/onlinedocs/libstdc++/manual/bk01pt01ch01s02.html
+
+    If you cannot comply with its requirements, i.e. you cannot redistribute
+    the shared library, do not use it in your project.
+
+The reason the shared version of GNU libstdc++ is not called libstdc++.so is
+because this would conflict at runtime with the system's own minimal C++
+runtime, which is /system/lib/libstdc++.so. This enforces a new name for the
+GNU ELF library. This is not a problem for the static library.
 
 </pre></body></html>

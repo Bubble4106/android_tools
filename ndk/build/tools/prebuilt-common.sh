@@ -41,28 +41,28 @@ max_length ()
 # Usage:  str=`dashes_to_underscores <values>`
 dashes_to_underscores ()
 {
-    echo $@ | tr '-' '_'
+    echo "$@" | tr '-' '_'
 }
 
 # Translate underscores to dashes
 # Usage: str=`underscores_to_dashes <values>`
 underscores_to_dashes ()
 {
-    echo $@ | tr '_' '-'
+    echo "$@" | tr '_' '-'
 }
 
 # Translate commas to spaces
 # Usage: str=`commas_to_spaces <list>`
 commas_to_spaces ()
 {
-    echo $@ | tr ',' ' '
+    echo "$@" | tr ',' ' '
 }
 
 # Translate spaces to commas
 # Usage: list=`spaces_to_commas <string>`
 spaces_to_commas ()
 {
-    echo $@ | tr ' ' ','
+    echo "$@" | tr ' ' ','
 }
 
 # Remove trailing path of a path
@@ -111,7 +111,7 @@ reverse_path ()
 sort_uniq ()
 {
     local RET
-    RET=$(echo $@ | tr ' ' '\n' | sort -u)
+    RET=$(echo "$@" | tr ' ' '\n' | sort -u)
     echo $RET
 }
 
@@ -125,6 +125,14 @@ list_files_under ()
     else
         echo ""
     fi
+}
+
+# Assign a value to a variable
+# $1: Variable name
+# $2: Value
+var_assign ()
+{
+    eval $1=\"$2\"
 }
 
 #====================================================
@@ -556,12 +564,95 @@ handle_mingw ()
         if [ "$TRY64" = "yes" ]; then
             ABI_CONFIGURE_HOST=amd64-mingw32msvc
         else
-            ABI_CONFIGURE_HOST=i586-mingw32msvc
+            # NOTE: The canadian-cross build of Binutils 2.19 will fail if you
+            #        use i586-pc-mingw32msvc here. Binutils 2.21 will work ok
+            #        with both names.
+            #       Use i586-pc-mingw32msvc here because wrappers are generated
+            #        using this name
+            ABI_CONFIGURE_HOST=i586-pc-mingw32msvc
         fi
         HOST_OS=windows
         HOST_TAG=windows
         HOST_EXE=.exe
     fi
+}
+
+# If --mingw option is used, check that there is a working
+# mingw32 toolchain installed.
+#
+# If there is, check that it's working
+#
+# $1: install directory for wrapper toolchain
+#
+prepare_mingw_toolchain ()
+{
+    if [ "$MINGW" != "yes" ]; then
+        return
+    fi
+
+    # IMPORTANT NOTE: binutils 2.21 requires a cross toolchain named
+    # i585-pc-mingw32msvc-gcc, or it will fail its configure step late
+    # in the toolchain build. Note that binutils 2.19 can build properly
+    # with i585-mingw32mvsc-gcc, which is the name used by the 'mingw32'
+    # toolchain install on Debian/Ubuntu.
+    #
+    # To solve this dilemma, we create a wrapper toolchain named
+    # i586-pc-mingw32msvc-gcc that really calls i586-mingw32msvc-gcc,
+    # this works with all versions of binutils.
+    #
+    # We apply the same logic to the 64-bit Windows cross-toolchain
+    #
+    # Fedora note: On Fedora it's 32-bit only and called i686-pc-mingw32-
+    # so we just add one more prefix to the list to check.
+    if [ "$HOST_ARCH" = "x86_64" -a "$TRY64" = "yes" ]; then
+        BINPREFIX=x86_64-pc-mingw32msvc-
+        BINPREFIXLST="x86_64-pc-mingw32msvc- amd64-mingw32msvc-"
+        DEBIAN_NAME=mingw64
+    else
+        # we are trying 32 bit anyway, so forcing it to avoid build issues
+        force_32bit_binaries
+        BINPREFIX=i586-pc-mingw32msvc-
+        BINPREFIXLST="i586-pc-mingw32msvc- i586-mingw32msvc- i686-pc-mingw32-"
+        DEBIAN_NAME=mingw32
+    fi
+
+    # Scan $BINPREFIXLST list to find installed mingw toolchain. It will be
+    # wrapped later with $BINPREFIX.
+    for i in $BINPREFIXLST; do
+      find_program MINGW_GCC ${i}gcc
+      if [ -n "$MINGW_GCC" ]; then
+        dump "Found mingw toolchain: $MINGW_GCC"
+        break
+      fi
+    done
+        if [ -z "$MINGW_GCC" ]; then
+            echo "ERROR: Could not find in your PATH any of:"
+            for i in $BINPREFIXLST; do echo "   ${i}gcc"; done
+            echo "Please install the corresponding cross-toolchain and re-run this script"
+            echo "TIP: On Debian or Ubuntu, try: sudo apt-get install $DEBIAN_NAME"
+            exit 1
+        fi
+        # Create a wrapper toolchain, and prepend its dir to our PATH
+        MINGW_WRAP_DIR="$1"/$DEBIAN_NAME-wrapper
+        rm -rf "$MINGW_WRAP_DIR"
+
+        DST_PREFIX=${MINGW_GCC%gcc}
+        if [ "$NDK_CCACHE" ]; then
+            DST_PREFIX="$NDK_CCACHE $DST_PREFIX"
+        fi
+        $NDK_BUILDTOOLS_PATH/gen-toolchain-wrapper.sh --src-prefix=$BINPREFIX --dst-prefix="$DST_PREFIX" "$MINGW_WRAP_DIR"
+        # generate wrappers for BUILD toolchain
+        # this is required for mingw build to avoid tools canadian cross configuration issues
+        LEGACY_TOOLCHAIN_DIR="$ANDROID_NDK_ROOT/../prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.7-4.6"
+        $NDK_BUILDTOOLS_PATH/gen-toolchain-wrapper.sh --src-prefix=x86_64-linux-gnu- \
+                --dst-prefix="$LEGACY_TOOLCHAIN_DIR/bin/x86_64-linux-" "$MINGW_WRAP_DIR"
+        LEGACY_TOOLCHAIN_DIR="$ANDROID_NDK_ROOT/../prebuilts/gcc/linux-x86/host/i686-linux-glibc2.7-4.6"
+        $NDK_BUILDTOOLS_PATH/gen-toolchain-wrapper.sh --src-prefix=i386-linux-gnu- \
+                --dst-prefix="$LEGACY_TOOLCHAIN_DIR/bin/i686-linux-" "$MINGW_WRAP_DIR"
+        fail_panic "Could not create mingw wrapper toolchain in $MINGW_WRAP_DIR"
+
+        export PATH=$MINGW_WRAP_DIR:$PATH
+        dump "Using mingw wrapper: $MINGW_WRAP_DIR/${BINPREFIX}gcc"
 }
 
 handle_host ()
@@ -577,7 +668,11 @@ handle_host ()
 setup_ccache ()
 {
     # Support for ccache compilation
-    if [ "$NDK_CCACHE" ]; then
+    # We can't use this here when building Windows binaries on Linux with
+    # binutils 2.21, because defining CC/CXX in the environment makes the
+    # configure script fail later
+    #
+    if [ "$NDK_CCACHE" -a "$MINGW" != "yes" ]; then
         NDK_CCACHE_CC=$CC
         NDK_CCACHE_CXX=$CXX
         # Unfortunately, we can just do CC="$NDK_CCACHE $CC" because some
@@ -595,6 +690,22 @@ setup_ccache ()
 
 prepare_common_build ()
 {
+    if [ "$MINGW" = "yes" ]; then
+        if [ "$TRY64" = "yes" ]; then
+            log "Generating 64-bit Windows binaries"
+            HOST_BITS=64
+        else
+            log "Generating 32-bit Windows binaries"
+            HOST_BITS=32
+        fi
+        # Do *not* set CC and CXX when building the Windows binaries
+        # Otherwise, the GCC configure/build script will mess that Canadian cross
+        # build in weird ways. Instead we rely on the toolchain detected or generated
+        # previously in prepare_mingw_toolchain.
+        unset CC CXX STRIP
+        return
+    fi
+
     # On Linux, detect our legacy-compatible toolchain when in the Android
     # source tree, and use it to force the generation of glibc-2.7 compatible
     # binaries.
@@ -603,7 +714,7 @@ prepare_common_build ()
     # and the --mingw or --try-64 options are not used.
     #
     if [ "$HOST_OS" = "linux" -a -z "$CC" -a "$MINGW" != "yes" -a "$TRY64" != "yes" ]; then
-        LEGACY_TOOLCHAIN_DIR="$ANDROID_NDK_ROOT/../prebuilt/linux-x86/toolchain/i686-linux-glibc2.7-4.4.3"
+        LEGACY_TOOLCHAIN_DIR="$ANDROID_NDK_ROOT/../prebuilts/gcc/linux-x86/host/i686-linux-glibc2.7-4.6"
         if [ -d "$LEGACY_TOOLCHAIN_DIR" ] ; then
             log "Forcing generation of Linux binaries with legacy toolchain"
             CC="$LEGACY_TOOLCHAIN_DIR/bin/i686-linux-gcc"
@@ -735,8 +846,11 @@ prepare_target_build ()
     setup_ccache
 }
 
+# $1: Toolchain name
+#
 parse_toolchain_name ()
 {
+    TOOLCHAIN=$1
     if [ -z "$TOOLCHAIN" ] ; then
         echo "ERROR: Missing toolchain name!"
         exit 1
@@ -763,13 +877,29 @@ parse_toolchain_name ()
         ARCH="x86"
         ABI=$ARCH
         ABI_INSTALL_NAME="x86"
-        ABI_CONFIGURE_TARGET="i686-android-linux"
+        ABI_CONFIGURE_TARGET="i686-linux-android"
         # Enable C++ exceptions, RTTI and GNU libstdc++ at the same time
         # You can't really build these separately at the moment.
         ABI_CFLAGS_FOR_TARGET="-fPIC"
         ;;
+    mips*)
+        ARCH="mips"
+        ABI=$ARCH
+        ABI_INSTALL_NAME="mips"
+        ABI_CONFIGURE_TARGET="mipsel-linux-android"
+        # Set default to mips32
+        ABI_CONFIGURE_EXTRA_FLAGS="--with-arch=mips32"
+        # Enable C++ exceptions, RTTI and GNU libstdc++ at the same time
+        # You can't really build these separately at the moment.
+        # Add -fpic, because MIPS NDK will need to link .a into .so.
+        ABI_CFLAGS_FOR_TARGET="-fexceptions -fpic"
+        ABI_CXXFLAGS_FOR_TARGET="-frtti -fpic"
+        # Add --disable-fixed-point to disable fixed-point support
+        # Add --disable-threads for eh_frame handling in a single thread
+        ABI_CONFIGURE_EXTRA_FLAGS="$ABI_CONFIGURE_EXTRA_FLAGS --disable-fixed-point --disable-threads"
+        ;;
     * )
-        echo "Invalid toolchain specified. Expected (arm-linux-androideabi-*|x86-*)"
+        echo "Invalid toolchain specified. Expected (arm-linux-androideabi-*|x86-*|mips*)"
         echo ""
         print_help
         exit 1
@@ -786,10 +916,17 @@ parse_toolchain_name ()
     arm-*)
         GDBSERVER_HOST=arm-eabi-linux
         GDBSERVER_CFLAGS="-fno-short-enums"
+        GDBSERVER_LDFLAGS=
         ;;
     x86-*)
-        GDBSERVER_HOST=i686-android-linux-gnu
+        GDBSERVER_HOST=i686-linux-android
         GDBSERVER_CFLAGS=
+        GDBSERVER_LDFLAGS=
+        ;;
+    mips*)
+        GDBSERVER_HOST=mipsel-linux-android
+        GDBSERVER_CFLAGS=
+        GDBSERVER_LDFLAGS=
         ;;
     esac
 
@@ -810,7 +947,7 @@ get_prebuilt_host_tag ()
                 RET=linux-x86
             fi
             ;;
-        darwin_x86_64)
+        darwin-x86_64)
             if [ "$TRY64" = "no" ]; then
                 RET=darwin-x86
             fi
@@ -842,27 +979,86 @@ convert_abi_to_arch ()
         x86)
             RET=x86
             ;;
+        mips)
+            RET=mips
+            ;;
         *)
-            2> echo "ERROR: Unsupported ABI name: $1, use one of: armeabi, armeabi-v7a or x86"
+            2> echo "ERROR: Unsupported ABI name: $1, use one of: armeabi, armeabi-v7a or x86 or mips"
             exit 1
             ;;
     esac
     echo "$RET"
 }
 
-# Return the default binary path prefix for a given architecture
-# For example: arm -> toolchains/arm-linux-androideabi-4.4.3/prebuilt/<system>/bin/arm-linux-androideabi-
+# Take architecture name as input, and output the list of corresponding ABIs
+# Inverse for convert_abi_to_arch
+# $1: ARCH name
+# Out: ABI names list (comma-separated)
+convert_arch_to_abi ()
+{
+    local RET
+    case $1 in
+        arm)
+            RET=armeabi,armeabi-v7a
+            ;;
+        x86)
+            RET=x86
+            ;;
+        mips)
+            RET=mips
+            ;;
+        *)
+            >&2 echo "ERROR: Unsupported ARCH name: $1, use one of: arm, x86, mips"
+            exit 1
+            ;;
+    esac
+    echo "$RET"
+}
+
+# Take a list of architecture names as input, and output the list of corresponding ABIs
+# $1: ARCH names list (separated by spaces or commas)
+# Out: ABI names list (comma-separated)
+convert_archs_to_abis ()
+{
+    local RET
+    for ARCH in $(commas_to_spaces $@); do
+       ABI=$(convert_arch_to_abi $ARCH)
+       if [ -n "$ABI" ]; then
+          if [ -n "$RET" ]; then
+             RET=$RET",$ABI"
+          else
+             RET=$ABI
+          fi
+       else   # Error message is printed by convert_arch_to_abi
+          exit 1
+       fi
+    done
+    echo "$RET"
+}
+
+# Return the default toolchain binary path prefix for given architecture and gcc version
+# For example: arm 4.6 -> toolchains/arm-linux-androideabi-4.6/prebuilt/<system>/bin/arm-linux-androideabi-
 # $1: Architecture name
-# $2: optional, system name, defaults to $HOST_TAG
-get_default_toolchain_binprefix_for_arch ()
+# $2: GCC version
+# $3: optional, system name, defaults to $HOST_TAG
+get_toolchain_binprefix_for_arch ()
 {
     local NAME PREFIX DIR BINPREFIX
-    local SYSTEM=${2:-$(get_prebuilt_host_tag)}
-    NAME=$(get_default_toolchain_name_for_arch $1)
+    local SYSTEM=${3:-$(get_prebuilt_host_tag)}
+    NAME=$(get_toolchain_name_for_arch $1 $2)
     PREFIX=$(get_default_toolchain_prefix_for_arch $1)
     DIR=$(get_toolchain_install . $NAME $SYSTEM)
     BINPREFIX=${DIR#./}/bin/$PREFIX-
     echo "$BINPREFIX"
+}
+
+# Return the default toochain binary path prefix for a given architecture
+# For example: arm -> toolchains/arm-linux-androideabi-4.6/prebuilt/<system>/bin/arm-linux-androideabi-
+# $1: Architecture name
+# $2: optional, system name, defaults to $HOST_TAG
+get_default_toolchain_binprefix_for_arch ()
+{
+    get_toolchain_binprefix_for_arch $1 $DEFAULT_GCC_VERSION $2
 }
 
 # Return default API level for a given arch
@@ -908,7 +1104,7 @@ get_toolchain_install ()
 {
     local NDK="$1"
     shift
-    echo "$NDK/$(get_toolchain_install_subdir $@)"
+    echo "$NDK/$(get_toolchain_install_subdir "$@")"
 }
 
 # $1: toolchain name
@@ -984,7 +1180,8 @@ check_toolchain_install ()
 {
     TOOLCHAIN_PATH=`get_toolchain_install "$1" $2`
     if [ ! -d "$TOOLCHAIN_PATH" ] ; then
-        echo "ERROR: Toolchain '$2' not installed in '$NDK_DIR'!"
+        echo "ERROR: Cannot find directory '$TOOLCHAIN_PATH'!"
+        echo "       Toolchain '$2' not installed in '$NDK_DIR'!"
         echo "       Ensure that the toolchain has been installed there before."
         exit 1
     fi
@@ -1007,7 +1204,9 @@ check_toolchain_src_dir ()
     fi
 
     if [ ! -f "$SRC_DIR/build/configure" -o ! -d "$SRC_DIR/gcc" ]; then
-        echo "ERROR: This is not the top of a toolchain tree: $SRC_DIR"
+        echo "ERROR: Either the file $SRC_DIR/build/configure or"
+        echo "       the directory $SRC_DIR/gcc does not exist."
+        echo "This is not the top of a toolchain tree: $SRC_DIR"
         echo "You must give the path to a copy of the toolchain source directories"
         echo "created by 'download-toolchain-sources.sh."
         exit 1

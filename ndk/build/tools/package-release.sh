@@ -59,7 +59,7 @@ NO_GIT=no
 register_var_option "--no-git" NO_GIT "Don't use git to list input files, take all of them."
 
 # set of toolchain prebuilts we need to package
-TOOLCHAINS="$DEFAULT_ARCH_TOOLCHAIN_arm"
+TOOLCHAINS=$(get_toolchain_name_list_for_arch arm)
 OPTION_TOOLCHAINS=$TOOLCHAINS
 register_var_option "--toolchains=<list>" OPTION_TOOLCHAINS "Specify list of toolchains."
 
@@ -113,6 +113,13 @@ if [ $? = 0 ] ; then
 else
     TRY_X86=no
 fi
+# Do we need to support mips?
+echo "$ARCHS" | tr ' ' '\n' | grep -q mips
+if [ $? = 0 ] ; then
+    TRY_mips=yes
+else
+    TRY_mips=no
+fi
 
 # Compute ABIS from ARCHS
 ABIS=
@@ -135,7 +142,10 @@ if [ "$OPTION_TOOLCHAINS" != "$TOOLCHAINS" ]; then
     TOOLCHAINS=$(commas_to_spaces $OPTION_TOOLCHAINS)
 else
     if [ "$TRY_X86" = "yes" ]; then
-        TOOLCHAINS="$TOOLCHAINS $DEFAULT_ARCH_TOOLCHAIN_x86"
+        TOOLCHAINS=$TOOLCHAINS" "$(get_toolchain_name_list_for_arch x86)
+    fi
+    if [ "$TRY_mips" = "yes" ]; then
+        TOOLCHAINS=$TOOLCHAINS" "$(get_toolchain_name_list_for_arch mips)
     fi
     TOOLCHAINS=$(commas_to_spaces $TOOLCHAINS)
 fi
@@ -184,8 +194,10 @@ if [ -n "$PREBUILT_DIR" ] ; then
                 exit 1
             fi
         done
-        if [ ! -f "$PREBUILT_DIR/$TC-gdbserver.tar.bz2" ] ; then
-            echo "ERROR: Missing prebuilt file $TC-gdbserver.tar.bz2 in: $PREBUILT_DIR"
+    done
+    for ARCH in $ARCHS; do
+        if [ ! -f "$PREBUILT_DIR/$ARCH-gdbserver.tar.bz2" ] ; then
+            echo "ERROR: Missing prebuilt file $ARCH-gdbserver.tar.bz2 in: $PREBUILT_DIR"
             exit 1
         fi
     done
@@ -275,7 +287,7 @@ fi
 # first create the reference ndk directory from the git reference
 echo "Creating reference from source files"
 REFERENCE=$TMPDIR/reference && rm -rf $REFERENCE/* &&
-copy_file_list "$NDK_ROOT_DIR" "$REFERENCE" "$GIT_FILES" &&
+copy_file_list "$NDK_ROOT_DIR" "$REFERENCE" $GIT_FILES &&
 rm -f $REFERENCE/Android.mk
 fail_panic "Could not create reference. Aborting."
 
@@ -321,15 +333,19 @@ fi
 # Unpack prebuilt C++ runtimes headers and libraries
 if [ -z "$PREBUILT_NDK" ]; then
     # Unpack gdbserver
-    for TC in $TOOLCHAINS; do
-        unpack_prebuilt $TC-gdbserver.tar.bz2 "$REFERENCE"
+    for ARCH in $ARCHS; do
+        unpack_prebuilt $ARCH-gdbserver.tar.bz2 "$REFERENCE"
     done
     # Unpack C++ runtimes
-    unpack_prebuilt gnu-libstdc++-headers.tar.bz2 "$REFERENCE"
+    for VERSION in $DEFAULT_GCC_VERSION_LIST; do
+        unpack_prebuilt gnu-libstdc++-headers-$VERSION.tar.bz2 "$REFERENCE"
+    done
     for ABI in $ABIS; do
         unpack_prebuilt gabixx-libs-$ABI.tar.bz2 "$REFERENCE"
         unpack_prebuilt stlport-libs-$ABI.tar.bz2 "$REFERENCE"
-        unpack_prebuilt gnu-libstdc++-libs-$ABI.tar.bz2 "$REFERENCE"
+        for VERSION in $DEFAULT_GCC_VERSION_LIST; do
+            unpack_prebuilt gnu-libstdc++-libs-$VERSION-$ABI.tar.bz2 "$REFERENCE"
+        done
     done
 fi
 
@@ -350,7 +366,7 @@ for SYSTEM in $SYSTEMS; do
     BIN_RELEASE=$RELEASE_PREFIX-$SYSTEM
     DSTDIR=$TMPDIR/$RELEASE_PREFIX
     rm -rf $DSTDIR &&
-    copy_file_list "$REFERENCE" "$DSTDIR" "*"
+    copy_directory "$REFERENCE" "$DSTDIR"
     fail_panic "Could not copy reference. Aborting."
 
     if [ "$PREBUILT_NDK" ]; then
@@ -375,9 +391,11 @@ for SYSTEM in $SYSTEMS; do
             echo "WARNING: Could not find STLport source tree!"
         fi
 
-        copy_prebuilt "$GNUSTL_SUBDIR/include" "$GNUSTL_SUBDIR"
-        for STL_ABI in $PREBUILT_ABIS; do
-            copy_prebuilt "$GNUSTL_SUBDIR/libs/$STL_ABI" "$GNUSTL_SUBDIR/libs"
+        for VERSION in $DEFAULT_GCC_VERSION_LIST; do
+            copy_prebuilt "$GNUSTL_SUBDIR/$VERSION/include" "$GNUSTL_SUBDIR/$VERSION/"
+            for STL_ABI in $PREBUILT_ABIS; do
+                copy_prebuilt "$GNUSTL_SUBDIR/$VERSION/libs/$STL_ABI" "$GNUSTL_SUBDIR/$VERSION/libs"
+            done
         done
     else
         # Unpack gdbserver

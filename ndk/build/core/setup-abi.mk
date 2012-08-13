@@ -18,20 +18,26 @@
 
 $(call ndk_log,Building application '$(NDK_APP_NAME)' for ABI '$(TARGET_ARCH_ABI)')
 
-# Map ABIs to a target architecture
-TARGET_ARCH_for_armeabi     := arm
-TARGET_ARCH_for_armeabi-v7a := arm
-TARGET_ARCH_for_x86         := x86
+TARGET_ARCH := $(strip $(NDK_ABI.$(TARGET_ARCH_ABI).arch))
+ifndef TARGET_ARCH
+    $(call __ndk_info,ERROR: The $(TARGET_ARCH_ABI) ABI has no associated architecture!)
+    $(call __ndk_error,Aborting...)
+endif
 
-TARGET_ARCH := $(TARGET_ARCH_for_$(TARGET_ARCH_ABI))
-
-TARGET_OUT  := $(NDK_APP_OUT)/$(_app)/$(TARGET_ARCH_ABI)
+TARGET_OUT := $(NDK_APP_OUT)/$(_app)/$(TARGET_ARCH_ABI)
 
 # Special handling for x86: The minimal platform is android-9 here
 # For now, handle this with a simple substitution. We may want to implement
 # more general filtering in the future when introducing other ABIs.
 TARGET_PLATFORM_SAVED := $(TARGET_PLATFORM)
 ifeq ($(TARGET_ARCH),x86)
+$(foreach _plat,3 4 5 8,\
+    $(eval TARGET_PLATFORM := $$(subst android-$(_plat),android-9,$$(TARGET_PLATFORM)))\
+)
+endif
+
+# The minimal platform for mips is android-9
+ifeq ($(TARGET_ARCH),mips)
 $(foreach _plat,3 4 5 8,\
     $(eval TARGET_PLATFORM := $$(subst android-$(_plat),android-9,$$(TARGET_PLATFORM)))\
 )

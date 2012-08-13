@@ -17,6 +17,22 @@
 # several build scripts.
 #
 
+# Disable GNU Make implicit rules
+
+# this turns off the suffix rules built into make
+.SUFFIXES:
+
+# this turns off the RCS / SCCS implicit rules of GNU Make
+% : RCS/%,v
+% : RCS/%
+% : %,v
+% : s.%
+% : SCCS/s.%
+
+# If a rule fails, delete $@.
+.DELETE_ON_ERROR:
+
+
 # Define NDK_LOG in your environment to display log traces when
 # using the build scripts. See also the definition of ndk_log below.
 #
@@ -140,13 +156,22 @@ HOST_OS_BASE := $(HOST_OS)
 ifeq ($(HOST_OS),windows)
     ifneq (,$(strip $(wildcard /bin/uname.exe)))
         $(call ndk_log,Found /bin/uname.exe on Windows host, checking for Cygwin)
+        # NOTE: The 2>NUL here is for the case where we're running inside the
+        #       native Windows shell. On cygwin, this will create an empty NUL file
+        #       that we're going to remove later (see below).
         UNAME := $(shell /bin/uname.exe -s 2>NUL)
         $(call ndk_log,uname -s returned: $(UNAME))
         ifneq (,$(filter CYGWIN%,$(UNAME)))
-            $(call ndk_log,Cygwin detected!)
+            $(call ndk_log,Cygwin detected: $(shell uname -a))
             HOST_OS := cygwin
+            DUMMY := $(shell rm -f NUL) # Cleaning up
         else
-            $(call ndk_log,Cygwin *not* detected!)
+            ifneq (,$(filter MINGW32%,$(UNAME)))
+                $(call ndk_log,MSys detected: $(shell uname -a))
+                HOST_OS := cygwin
+            else
+                $(call ndk_log,Cygwin *not* detected!)
+            endif
         endif
     endif
 endif
@@ -222,21 +247,48 @@ $(call ndk_log,HOST_TAG set to $(HOST_TAG))
 HOST_PREBUILT := $(strip $(wildcard $(NDK_ROOT)/prebuilt/$(HOST_TAG)/bin))
 ifdef HOST_PREBUILT
     $(call ndk_log,Host tools prebuilt directory: $(HOST_PREBUILT))
-    HOST_AWK := $(wildcard $(HOST_PREBUILT)/awk$(HOST_EXEEXT))
-    HOST_SED  := $(wildcard $(HOST_PREBUILT)/sed$(HOST_EXEEXT))
-    HOST_MAKE := $(wildcard $(HOST_PREBUILT)/make$(HOST_EXEEXT))
+    # The windows prebuilt binaries are for ndk-build.cmd
+    # On cygwin, we must use the Cygwin version of these tools instead.
+    ifneq ($(HOST_OS),cygwin)
+        HOST_AWK := $(wildcard $(HOST_PREBUILT)/awk$(HOST_EXEEXT))
+        HOST_SED  := $(wildcard $(HOST_PREBUILT)/sed$(HOST_EXEEXT))
+        HOST_MAKE := $(wildcard $(HOST_PREBUILT)/make$(HOST_EXEEXT))
+    endif
 else
-    $(call ndk_log,Host tols prebuilt directory not found, using system tools)
+    $(call ndk_log,Host tools prebuilt directory not found, using system tools)
 endif
 
 HOST_ECHO := $(strip $(HOST_ECHO))
 ifndef HOST_ECHO
-    HOST_ECHO := $(strip $(wildcard $(NDK_ROOT)/prebuilt/$(HOST_TAG)/bin/echo$(HOST_EXEEXT)))
+    # Special case, on Cygwin, always use the host echo, not our prebuilt one
+    # which adds \r\n at the end of lines.
+    ifneq ($(HOST_OS),cygwin)
+        HOST_ECHO := $(strip $(wildcard $(NDK_ROOT)/prebuilt/$(HOST_TAG)/bin/echo$(HOST_EXEEXT)))
+    endif
 endif
 ifndef HOST_ECHO
     HOST_ECHO := echo
 endif
 $(call ndk_log,Host 'echo' tool: $(HOST_ECHO))
+
+# Define HOST_ECHO_N to perform the equivalent of 'echo -n' on all platforms.
+ifeq ($(HOST_OS),windows)
+  # Our custom toolbox echo binary supports -n.
+  HOST_ECHO_N := $(HOST_ECHO) -n
+else
+  # On Posix, just use bare printf.
+  HOST_ECHO_N := printf %s
+endif
+$(call ndk_log,Host 'echo -n' tool: $(HOST_ECHO_N))
+
+HOST_CMP := $(strip $(HOST_CMP))
+ifndef HOST_CMP
+    HOST_CMP := $(strip $(wildcard $(NDK_ROOT)/prebuilt/$(HOST_TAG)/bin/cmp$(HOST_EXEEXT)))
+endif
+ifndef HOST_CMP
+    HOST_CMP := cmp
+endif
+$(call ndk_log,Host 'cmp' tool: $(HOST_CMP))
 
 #
 # Verify that the 'awk' tool has the features we need.
@@ -342,14 +394,24 @@ ADD_TOOLCHAIN := $(BUILD_SYSTEM)/add-toolchain.mk
 # the list of all toolchains in this NDK
 NDK_ALL_TOOLCHAINS :=
 NDK_ALL_ABIS       :=
+NDK_ALL_ARCHS      :=
 
 TOOLCHAIN_CONFIGS := $(wildcard $(NDK_ROOT)/toolchains/*/config.mk)
 $(foreach _config_mk,$(TOOLCHAIN_CONFIGS),\
   $(eval include $(BUILD_SYSTEM)/add-toolchain.mk)\
 )
 
-NDK_ALL_TOOLCHAINS   := $(call remove-duplicates,$(NDK_ALL_TOOLCHAINS))
-NDK_ALL_ABIS         := $(call remove-duplicates,$(NDK_ALL_ABIS))
+NDK_ALL_TOOLCHAINS   := $(sort $(NDK_ALL_TOOLCHAINS))
+NDK_ALL_ABIS         := $(sort $(NDK_ALL_ABIS))
+NDK_ALL_ARCHS        := $(sort $(NDK_ALL_ARCHS))
+
+# Check that each ABI has a single architecture definition
+$(foreach _abi,$(strip $(NDK_ALL_ABIS)),\
+  $(if $(filter-out 1,$(words $(NDK_ABI.$(_abi).arch))),\
+    $(call __ndk_info,INTERNAL ERROR: The $(_abi) ABI should have exactly one architecture definitions. Found: '$(NDK_ABI.$(_abi).arch)')\
+    $(call __ndk_error,Aborting...)\
+  )\
+)
 
 # Allow the user to define NDK_TOOLCHAIN to a custom toolchain name.
 # This is normally used when the NDK release comes with several toolchains
@@ -366,6 +428,27 @@ ifdef NDK_TOOLCHAIN
     $(call ndk_log, Using specific toolchain $(NDK_TOOLCHAIN))
 endif
 
+# Allow the user to define NDK_TOOLCHAIN_VERSION to override the toolchain
+# version number. Unlike NDK_TOOLCHAIN, this only changes the suffix of
+# the toolchain path we're using.
+#
+# For example, if GCC 4.6 is the default, defining NDK_TOOLCHAIN_VERSION=4.4.3
+# will ensure that ndk-build uses the following toolchains, depending on
+# the target architecture:
+#
+#    arm -> arm-linux-androideabi-4.4.3
+#    x86 -> x86-android-linux-4.4.3
+#    mips -> mipsel-linux-android-4.4.3
+#
+# This is used in setup-toolchain.mk
+#
+NDK_TOOLCHAIN_VERSION := $(strip $(NDK_TOOLCHAIN_VERSION))
+
+
+$(call ndk_log, This NDK supports the following target architectures and ABIS:)
+$(foreach arch,$(NDK_ALL_ARCHS),\
+    $(call ndk_log, $(space)$(space)$(arch): $(NDK_ARCH.$(arch).abis))\
+)
 $(call ndk_log, This NDK supports the following toolchains and target ABIs:)
 $(foreach tc,$(NDK_ALL_TOOLCHAINS),\
     $(call ndk_log, $(space)$(space)$(tc):  $(NDK_TOOLCHAIN.$(tc).abis))\

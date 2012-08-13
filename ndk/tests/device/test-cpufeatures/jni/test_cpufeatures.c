@@ -26,6 +26,9 @@ int main(void)
     case ANDROID_CPU_FAMILY_X86:
         printf("CPU family is x86\n");
         break;
+    case ANDROID_CPU_FAMILY_MIPS:
+        printf("CPU family is MIPS\n");
+        break;
     default:
         fprintf(stderr, "Unsupported CPU family: %d\n", family);
         return 1;
@@ -43,6 +46,26 @@ int main(void)
         if ((features & ANDROID_CPU_ARM_FEATURE_NEON) != 0) {
             printf( "  NEON\n" );
         }
+        if ((features & ANDROID_CPU_ARM_FEATURE_LDREX_STREX) != 0) {
+            printf( "  ldrex/strex\n" );
+        }
     }
+
+    if (family == ANDROID_CPU_FAMILY_X86) {
+        uint64_t features = android_getCpuFeatures();
+        printf( "Supported x86 features:\n");
+        if ((features & ANDROID_CPU_X86_FEATURE_SSSE3) != 0) {
+            printf( "  SSSE3\n");
+        }
+        if ((features & ANDROID_CPU_X86_FEATURE_POPCNT) != 0) {
+            printf( "  POPCNT\n");
+        }
+        if ((features & ANDROID_CPU_X86_FEATURE_MOVBE) != 0) {
+            printf( "  MOVBE\n");
+        }
+    }
+
+    int count = android_getCpuCount();
+    printf( "Number of CPU cores: %d\n", count);
     return 0;
 }

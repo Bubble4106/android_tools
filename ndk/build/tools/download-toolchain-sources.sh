@@ -26,7 +26,7 @@ PROGDIR=`cd $PROGDIR && pwd`
 
 # the default branch to use
 BRANCH=master
-register_option "--branch=<name>" BRANCH "Specify release branch"
+register_var_option "--branch=<name>" BRANCH "Specify release branch"
 
 # the default release name (use today's date)
 if [ "$TOOLCHAIN_GIT_DATE" -a "$TOOLCHAIN_GIT_DATE" != "now" ] ; then
@@ -123,54 +123,72 @@ if [ -n "$OPTION_GIT_REFERENCE" ] ; then
     dump "Using git clone reference: $GITREFERENCE"
 fi
 
+# Clone a given toolchain git repository
+# $1: repository name, relative to $GITPREFIX (e.g. 'gcc')
+#
 toolchain_clone ()
 {
     local GITFLAGS
-    GITFLAGS=
+    GITFLAGS="--no-checkout"
     if [ "$GITREFERENCE" ]; then
-        GITFLAGS="$GITFLAGS --shared --reference $GITREFERENCE/$1"
+        GITFLAGS=$GITFLAGS" --shared --reference $GITREFERENCE/$1"
     fi
-    dump "downloading sources for toolchain/$1"
+    dump "Cloning git repository for toolchain/$1"
     if [ -d "$GITPREFIX/$1" ]; then
-        log "cloning $GITPREFIX/$1"
-        run git clone $GITFLAGS $GITPREFIX/$1 $1
+        run ln -s "$GITPREFIX/$1" $CLONE_DIR/$1.git
     else
         log "cloning $GITPREFIX/$1.git"
-        run git clone $GITFLAGS $GITPREFIX/$1.git $1
+        (cd $CLONE_DIR && run git clone $GITFLAGS $GITPREFIX/$1.git)
     fi
     fail_panic "Could not clone $GITPREFIX/$1.git ?"
-    log "checking out $BRANCH branch of $1.git"
-    cd $1
-    if [ "$BRANCH" != "master" ] ; then
-        run git checkout -b $BRANCH origin/$BRANCH
-        fail_panic "Could not checkout $1 ?"
-    fi
-    # If --git-date is used, or we have a default
+}
+
+# Checkout sources from a git clone created with toolchain_clone
+# $1: repository/clone name (e.g. 'gcc')
+# $2: sub-path to extract, relative to clone top-level (e.g. 'gcc-4.4.3')
+#
+toolchain_checkout ()
+{
+    local NAME=$1
+    shift
+    local GITOPTS="--git-dir=$CLONE_DIR/$NAME/.git"
+    log "Checking out $BRANCH branch of $NAME.git: $@"
+    local REVISION=origin/$BRANCH
     if [ -n "$GIT_DATE" ] ; then
-        REVISION=`git rev-list -n 1 --until="$GIT_DATE" HEAD`
-        dump "Using sources for date '$GIT_DATE': toolchain/$1 revision $REVISION"
-        run git checkout $REVISION
-        fail_panic "Could not checkout $1 ?"
+        REVISION=`git $GITOPTS rev-list -n 1 --until="$GIT_DATE" $REVISION`
     fi
-    (printf "%-32s " "toolchain/$1.git"; git log -1 --format=oneline) >> $SOURCES_LIST
-    # get rid of .git directory, we won't need it.
-    cd ..
-    log "getting rid of .git directory for $1."
-    run rm -rf $1/.git
+    (mkdir -p $TMPDIR/$NAME && cd $TMPDIR/$NAME && run git $GITOPTS checkout $REVISION "$@")
+    fail_panic "Could not checkout $NAME / $@ ?"
+    (printf "%-32s " "toolchain/$NAME.git"; git $GITOPTS log -1 --format=oneline $REVISION) >> $SOURCES_LIST
 }
 
 cd $TMPDIR
 
+CLONE_DIR=$TMPDIR/git
+mkdir -p $CLONE_DIR
+
 SOURCES_LIST=$(pwd)/SOURCES
 rm -f $SOURCES_LIST && touch $SOURCES_LIST
 
-toolchain_clone binutils
 toolchain_clone build
+
+toolchain_clone gmp
+toolchain_clone mpfr
+toolchain_clone mpc
+toolchain_clone binutils
 toolchain_clone gcc
 toolchain_clone gdb
-toolchain_clone gmp
-toolchain_clone gold  # not sure about this one !
-toolchain_clone mpfr
+toolchain_clone expat
+
+
+toolchain_checkout build .
+toolchain_checkout gmp  .
+toolchain_checkout mpfr .
+toolchain_checkout mpc  .
+toolchain_checkout expat .
+toolchain_checkout binutils binutils-2.19 binutils-2.21
+toolchain_checkout gcc gcc-4.4.3 gcc-4.6
+toolchain_checkout gdb gdb-6.6 gdb-7.1.x gdb-7.3.x
 
 # Patch the toolchain sources
 if [ "$OPTION_NO_PATCHES" != "yes" ]; then
@@ -184,17 +202,6 @@ if [ "$OPTION_NO_PATCHES" != "yes" ]; then
         fi
     fi
 fi
-
-
-# We only keep one version of gcc and binutils
-
-# we clearly don't need this
-log "getting rid of obsolete sources: gcc-4.2.1 gcc-4.3.1 gcc-4.4.0 gdb-6.8 binutils-2.17"
-rm -rf $TMPDIR/gcc/gcc-4.2.1
-rm -rf $TMPDIR/gcc/gcc-4.3.1
-rm -rf $TMPDIR/gcc/gcc-4.4.0
-rm -rf $TMPDIR/gcc/gdb-6.8
-rm -rf $TMPDIR/binutils/binutils-2.17
 
 # remove all info files from the toolchain sources
 # they create countless little problems during the build

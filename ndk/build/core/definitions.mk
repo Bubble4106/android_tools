@@ -159,7 +159,9 @@ endif
 #            to remove some files.
 # -----------------------------------------------------------------------------
 ifeq ($(HOST_OS),windows)
-host-rm = $(foreach _filepattern,$1,$(if $(strip $(wildcard $(_filepattern))),del /f/q/s $(subst /,\,$(_filepattern)) >NUL))
+host-rm = \
+    $(eval __host_rm_files := $(foreach __host_rm_file,$1,$(subst /,\,$(wildcard $(__host_rm_file)))))\
+    $(if $(__host_rm_files),del /f/q $(__host_rm_files) >NUL 2>NUL)
 else
 host-rm = rm -f $1
 endif
@@ -172,7 +174,9 @@ endif
 #            to remove some files _and_ directories.
 # -----------------------------------------------------------------------------
 ifeq ($(HOST_OS),windows)
-host-rmdir = del /f/s/e/q $(subst /,\,$1) >NUL 2>NUL
+host-rmdir = \
+    $(eval __host_rmdir_files := $(foreach __host_rmdir_file,$1,$(subst /,\,$(wildcard $(__host_rmdir_file)))))\
+    $(if $(__host_rmdir_files),del /f/s/q $(__host_rmdir_files) >NUL 2>NUL)
 else
 host-rmdir = rm -rf $1
 endif
@@ -185,7 +189,7 @@ endif
 #            to create a path if it doesn't exist.
 # -----------------------------------------------------------------------------
 ifeq ($(HOST_OS),windows)
-host-mkdir = if not exist $(subst /,\,$1) md $(subst /,\,$1)
+host-mkdir = if not exist $(subst /,\,"$1") md $(subst /,\,"$1")
 else
 host-mkdir = mkdir -p $1
 endif
@@ -199,7 +203,7 @@ endif
 #            to copy a single file
 # -----------------------------------------------------------------------------
 ifeq ($(HOST_OS),windows)
-host-cp = copy /b/y $(subst /,\,$1 $2) > NUL
+host-cp = copy /b/y $(subst /,\,"$1" "$2") > NUL
 else
 host-cp = cp -f $1 $2
 endif
@@ -214,11 +218,10 @@ endif
 #            (if possible).
 # -----------------------------------------------------------------------------
 ifeq ($(HOST_OS),windows)
-host-install = copy /b/y $(subst /,\,$1 $2) > NUL
+host-install = copy /b/y $(subst /,\,"$1" "$2") > NUL
 else
 host-install = install -p $1 $2
 endif
-
 
 # -----------------------------------------------------------------------------
 # Function : host-c-includes
@@ -235,6 +238,197 @@ else
 host-c-includes = $(1:%=-I%)
 endif
 
+# -----------------------------------------------------------------------------
+# Function : copy-if-differ
+# Arguments: 1: source file
+#            2: destination file
+# Usage    : $(call copy-if-differ,<src-file>,<dst-file>)
+# Rationale: This function copy source file to destination file if contents are
+#            different.
+# -----------------------------------------------------------------------------
+ifeq ($(HOST_OS),windows)
+copy-if-differ = $(HOST_CMP) -s $1 $2 > NUL || copy /b/y $(subst /,\,"$1" "$2") > NUL
+else
+copy-if-differ = $(HOST_CMP) -s $1 $2 > /dev/null 2>&1 || cp -f $1 $2
+endif
+
+# -----------------------------------------------------------------------------
+# Function : generate-list-file
+# Arguments: 1: list of strings (possibly very long)
+#            2: file name
+# Returns  : write the content of a possibly very long string list to a file.
+#            this shall be used in commands and will work around limitations
+#            of host command-line lengths.
+# Usage    : $(call host-echo-to-file,<string-list>,<file>)
+# Rationale: When there is a very large number of objects and/or libraries at
+#            link time, the size of the command becomes too large for the
+#            host system's maximum. Various tools however support the
+#            @<listfile> syntax, where <listfile> is the path of a file
+#            which content will be parsed as if they were options.
+#
+#            This function is used to generate such a list file from a long
+#            list of strings in input.
+#
+# -----------------------------------------------------------------------------
+
+# Helper functions because the GNU Make $(word ...) function does
+# not accept a 0 index, so we need to bump any of these to 1 when
+# we find them.
+#
+index-is-zero = $(filter 0 00 000 0000 00000 000000 0000000,$1)
+bump-0-to-1 = $(if $(call index-is-zero,$1),1,$1)
+
+# Same as $(wordlist ...) except the start index, if 0, is bumped to 1
+index-word-list = $(wordlist $(call bump-0-to-1,$1),$2,$3)
+
+# NOTE: With GNU Make $1 and $(1) are equivalent, which means
+#       that $10 is equivalent to $(1)0, and *not* $(10).
+
+# Used to generate a slice of up to 10 items starting from index $1,
+# If $1 is 0, it will be bumped to 1 (and only 9 items will be printed)
+# $1: start (tenth) index. Can be 0
+# $2: word list
+#
+define list-file-start-gen-10
+	$$(hide) $$(HOST_ECHO_N) "$(call index-word-list,$10,$19,$2) " >> $$@
+endef
+
+# Used to generate a slice of always 10 items starting from index $1
+# $1: start (tenth) index. CANNOT BE 0
+# $2: word list
+define list-file-always-gen-10
+	$$(hide) $$(HOST_ECHO_N) "$(wordlist $10,$19,$2) " >> $$@
+endef
+
+# Same as list-file-always-gen-10, except that the word list might be
+# empty at position $10 (i.e. $(1)0)
+define list-file-maybe-gen-10
+ifneq ($(word $10,$2),)
+	$$(hide) $$(HOST_ECHO_N) "$(wordlist $10,$19,$2) " >> $$@
+endif
+endef
+
+define list-file-start-gen-100
+$(call list-file-start-gen-10,$10,$2)
+$(call list-file-always-gen-10,$11,$2)
+$(call list-file-always-gen-10,$12,$2)
+$(call list-file-always-gen-10,$13,$2)
+$(call list-file-always-gen-10,$14,$2)
+$(call list-file-always-gen-10,$15,$2)
+$(call list-file-always-gen-10,$16,$2)
+$(call list-file-always-gen-10,$17,$2)
+$(call list-file-always-gen-10,$18,$2)
+$(call list-file-always-gen-10,$19,$2)
+endef
+
+define list-file-always-gen-100
+$(call list-file-always-gen-10,$10,$2)
+$(call list-file-always-gen-10,$11,$2)
+$(call list-file-always-gen-10,$12,$2)
+$(call list-file-always-gen-10,$13,$2)
+$(call list-file-always-gen-10,$14,$2)
+$(call list-file-always-gen-10,$15,$2)
+$(call list-file-always-gen-10,$16,$2)
+$(call list-file-always-gen-10,$17,$2)
+$(call list-file-always-gen-10,$18,$2)
+$(call list-file-always-gen-10,$19,$2)
+endef
+
+define list-file-maybe-gen-100
+ifneq ($(word $(call bump-0-to-1,$100),$2),)
+ifneq ($(word $199,$2),)
+$(call list-file-start-gen-10,$10,$2)
+$(call list-file-always-gen-10,$11,$2)
+$(call list-file-always-gen-10,$12,$2)
+$(call list-file-always-gen-10,$13,$2)
+$(call list-file-always-gen-10,$14,$2)
+$(call list-file-always-gen-10,$15,$2)
+$(call list-file-always-gen-10,$16,$2)
+$(call list-file-always-gen-10,$17,$2)
+$(call list-file-always-gen-10,$18,$2)
+$(call list-file-always-gen-10,$19,$2)
+else
+ifneq ($(word $150,$2),)
+$(call list-file-start-gen-10,$10,$2)
+$(call list-file-always-gen-10,$11,$2)
+$(call list-file-always-gen-10,$12,$2)
+$(call list-file-always-gen-10,$13,$2)
+$(call list-file-always-gen-10,$14,$2)
+$(call list-file-maybe-gen-10,$15,$2)
+$(call list-file-maybe-gen-10,$16,$2)
+$(call list-file-maybe-gen-10,$17,$2)
+$(call list-file-maybe-gen-10,$18,$2)
+$(call list-file-maybe-gen-10,$19,$2)
+else
+$(call list-file-start-gen-10,$10,$2)
+$(call list-file-maybe-gen-10,$11,$2)
+$(call list-file-maybe-gen-10,$12,$2)
+$(call list-file-maybe-gen-10,$13,$2)
+$(call list-file-maybe-gen-10,$14,$2)
+endif
+endif
+endif
+endef
+
+define list-file-maybe-gen-1000
+ifneq ($(word $(call bump-0-to-1,$1000),$2),)
+ifneq ($(word $1999,$2),)
+$(call list-file-start-gen-100,$10,$2)
+$(call list-file-always-gen-100,$11,$2)
+$(call list-file-always-gen-100,$12,$2)
+$(call list-file-always-gen-100,$13,$2)
+$(call list-file-always-gen-100,$14,$2)
+$(call list-file-always-gen-100,$15,$2)
+$(call list-file-always-gen-100,$16,$2)
+$(call list-file-always-gen-100,$17,$2)
+$(call list-file-always-gen-100,$18,$2)
+$(call list-file-always-gen-100,$19,$2)
+else
+ifneq ($(word $1500,$2),)
+$(call list-file-start-gen-100,$10,$2)
+$(call list-file-always-gen-100,$11,$2)
+$(call list-file-always-gen-100,$12,$2)
+$(call list-file-always-gen-100,$13,$2)
+$(call list-file-always-gen-100,$14,$2)
+$(call list-file-maybe-gen-100,$15,$2)
+$(call list-file-maybe-gen-100,$16,$2)
+$(call list-file-maybe-gen-100,$17,$2)
+$(call list-file-maybe-gen-100,$18,$2)
+$(call list-file-maybe-gen-100,$19,$2)
+else
+$(call list-file-start-gen-100,$10,$2)
+$(call list-file-maybe-gen-100,$11,$2)
+$(call list-file-maybe-gen-100,$12,$2)
+$(call list-file-maybe-gen-100,$13,$2)
+$(call list-file-maybe-gen-100,$14,$2)
+endif
+endif
+endif
+endef
+
+
+define generate-list-file-ev
+__list_file := $2
+
+.PHONY: $$(__list_file).tmp
+
+$$(__list_file).tmp:
+	@$$(call host-mkdir,$$(dir $$@))
+	$$(hide) $$(HOST_ECHO_N) "" > $$@
+$(call list-file-maybe-gen-1000,0,$1)
+$(call list-file-maybe-gen-1000,1,$1)
+$(call list-file-maybe-gen-1000,2,$1)
+$(call list-file-maybe-gen-1000,3,$1)
+$(call list-file-maybe-gen-1000,4,$1)
+$(call list-file-maybe-gen-1000,5,$1)
+
+$$(__list_file): $$(__list_file).tmp
+	$$(hide) $$(call copy-if-differ,$$@.tmp,$$@)
+	$$(hide) $$(call host-rm,$$@.tmp)
+
+endef
+
+generate-list-file = $(eval $(call generate-list-file-ev,$1,$2))
 
 # -----------------------------------------------------------------------------
 # Function : link-whole-archives
@@ -305,12 +499,14 @@ modules-LOCALS := \
     ARM_MODE \
     ARM_NEON \
     DISABLE_NO_EXECUTE \
+    DISABLE_RELRO \
     EXPORT_CFLAGS \
     EXPORT_CPPFLAGS \
     EXPORT_LDLIBS \
     EXPORT_C_INCLUDES \
     FILTER_ASM \
     CPP_FEATURES \
+    SHORT_COMMANDS \
 
 # The following are generated by the build scripts themselves
 
@@ -1049,7 +1245,7 @@ NDK_APP_VARS_REQUIRED :=
 # the list of variables that *may* be defined in Application.mk files
 NDK_APP_VARS_OPTIONAL := APP_OPTIM APP_CPPFLAGS APP_CFLAGS APP_CXXFLAGS \
                          APP_PLATFORM APP_BUILD_SCRIPT APP_ABI APP_MODULES \
-                         APP_PROJECT_PATH APP_STL
+                         APP_PROJECT_PATH APP_STL APP_SHORT_COMMANDS
 
 # the list of all variables that may appear in an Application.mk file
 # or defined by the build scripts.
@@ -1105,15 +1301,19 @@ endif
 # cmd-convert-deps
 #
 # On Cygwin, we need to convert the .d dependency file generated by
-# the gcc toolchain by transforming any WIndows paths inside it into
+# the gcc toolchain by transforming any Windows paths inside it into
 # Cygwin paths that GNU Make can understand (i.e. C:/Foo => /cygdrive/c/Foo)
 #
 # To do that, we will force the compiler to write the dependency file to
-# <foo>.d.org, which will will later convert through a clever Awk script.
+# <foo>.d.org, which will will later convert through a clever sed script
+# that is auto-generated by our build system.
 #
-# The result will be written to <foo>.d and <foo>.d.org erased.
-# Note that it is important to use different file names here.
+# The script is invoked with:
 #
+#    $(NDK_DEPENDENCIES_CONVERTER) foo.d
+#
+# It will look if foo.d.org exists, and if so, process it
+# to generate foo.d, then remove the original foo.d.org.
 #
 # On other systems, we simply tell the compiler to write to the .d file directly.
 #
@@ -1125,11 +1325,7 @@ endif
 #
 ifeq ($(HOST_OS),cygwin)
 convert-deps = $1.org
-cmd-convert-deps = \
-    && ( if [ -f "$1.org" ]; then \
-          $(HOST_AWK) -f $(BUILD_AWK)/convert-deps-to-cygwin.awk $1.org > $1 && \
-          $(call host-rm,$1.org); \
-      fi )
+cmd-convert-deps = && $(NDK_DEPENDENCIES_CONVERTER) $1
 else
 convert-deps = $1
 cmd-convert-deps = 
@@ -1150,7 +1346,15 @@ $$(_OBJ): PRIVATE_MODULE   := $$(LOCAL_MODULE)
 $$(_OBJ): PRIVATE_TEXT     := "$$(_TEXT)"
 $$(_OBJ): PRIVATE_CC       := $$(_CC)
 $$(_OBJ): PRIVATE_CFLAGS   := $$(_FLAGS)
-$$(_OBJ): $$(_SRC) $$(LOCAL_MAKEFILE) $$(NDK_APP_APPLICATION_MK)
+
+ifeq ($$(LOCAL_SHORT_COMMANDS),true)
+_OPTIONS_LISTFILE := $$(_OBJ).cflags
+$$(_OBJ): $$(call generate-list-file,$$(_FLAGS),$$(_OPTIONS_LISTFILE))
+$$(_OBJ): PRIVATE_CFLAGS := @$$(call host-path,$$(_OPTIONS_LISTFILE))
+$$(_OBJ): $$(_OPTIONS_LISTFILE)
+endif
+
+$$(_OBJ): $$(_SRC) $$(LOCAL_MAKEFILE) $$(NDK_APP_APPLICATION_MK) $$(NDK_DEPENDENCIES_CONVERTER)
 	@$$(call host-mkdir,$$(dir $$(PRIVATE_OBJ)))
 	@$$(HOST_ECHO) "$$(PRIVATE_TEXT)  : $$(PRIVATE_MODULE) <= $$(notdir $$(PRIVATE_SRC))"
 	$$(hide) $$(PRIVATE_CC) -MMD -MP -MF $$(call convert-deps,$$(PRIVATE_DEPS)) $$(PRIVATE_CFLAGS) $$(call host-path,$$(PRIVATE_SRC)) -o $$(call host-path,$$(PRIVATE_OBJ)) \

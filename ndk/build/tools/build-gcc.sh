@@ -46,13 +46,21 @@ GDB_VERSION=$DEFAULT_GDB_VERSION
 register_var_option "--gdb-version=<version>"  GDB_VERSION "Specify gdb version"
 
 BINUTILS_VERSION=$DEFAULT_BINUTILS_VERSION
-register_var_option "--binutils-version=<version>" BINUTILS_VERSION "Specify binutils version"
+EXPLICIT_BINUTILS_VERSION=
+register_option "--binutils-version=<version>" do_binutils_version "Specify binutils version" "$BINUTILS_VERSION"
+do_binutils_version () {
+    BINUTILS_VERSION=$1
+    EXPLICIT_BINUTILS_VERSION=true
+}
 
 GMP_VERSION=$DEFAULT_GMP_VERSION
 register_var_option "--gmp-version=<version>" GMP_VERSION "Specify gmp version"
 
 MPFR_VERSION=$DEFAULT_MPFR_VERSION
 register_var_option "--mpfr-version=<version>" MPFR_VERSION "Specify mpfr version"
+
+MPC_VERSION=$DEFAULT_MPC_VERSION
+register_var_option "--mpc-version=<version>" MPC_VERSION "Specify mpc version"
 
 PACKAGE_DIR=
 register_var_option "--package-dir=<path>" PACKAGE_DIR "Create archive tarball in specific directory"
@@ -62,6 +70,8 @@ register_mingw_option
 register_try64_option
 
 extract_parameters "$@"
+
+prepare_mingw_toolchain /tmp/ndk-$USER/build
 
 fix_option BUILD_OUT "$OPTION_BUILD_OUT" "build directory"
 setup_default_log_file $BUILD_OUT/config.log
@@ -115,7 +125,7 @@ set_parameters $PARAMETERS
 
 prepare_target_build
 
-parse_toolchain_name
+parse_toolchain_name $TOOLCHAIN
 
 fix_sysroot "$OPTION_SYSROOT"
 
@@ -127,7 +137,11 @@ if [ ! -d $SRC_DIR/gdb/gdb-$GDB_VERSION ] ; then
     exit 1
 fi
 
-fix_option BINUTILS_VERSION "$OPTION_BINUTILS_VERSION" "binutils version"
+if [ -z "$EXPLICIT_BINUTILS_VERSION" ]; then
+    BINUTILS_VERSION=$(get_default_binutils_version_for_gcc $TOOLCHAIN)
+    dump "Auto-config: --binutils-version=$BINUTILS_VERSION"
+fi
+
 if [ ! -d $SRC_DIR/binutils/binutils-$BINUTILS_VERSION ] ; then
     echo "ERROR: Missing binutils sources: $SRC_DIR/binutils/binutils-$BINUTILS_VERSION"
     echo "       Use --binutils-version=<version> to specify alternative."
@@ -151,26 +165,36 @@ set_toolchain_ndk $NDK_DIR $TOOLCHAIN
 dump "Using C compiler: $CC"
 dump "Using C++ compiler: $CXX"
 
+rm -rf $BUILD_OUT
+mkdir -p $BUILD_OUT
+
 # Location where the toolchain license files are
 TOOLCHAIN_LICENSES=$ANDROID_NDK_ROOT/build/tools/toolchain-licenses
 
-# Copy the sysroot to the installation prefix. This prevents the generated
-# binaries from containing hard-coding host paths
-TOOLCHAIN_SYSROOT=$TOOLCHAIN_PATH/sysroot
-dump "Sysroot  : Copying: $SYSROOT --> $TOOLCHAIN_SYSROOT"
-mkdir -p $TOOLCHAIN_SYSROOT && (cd $SYSROOT && tar ch *) | (cd $TOOLCHAIN_SYSROOT && tar x)
+# Without option "--sysroot" (and its variations), GCC will attempt to
+# search path specified by "--with-sysroot" at build time for headers/libs.
+# Path at --with-sysroot contains minimal headers and libs to boostrap
+# toolchain build, and it's not needed afterward (NOTE: NDK provides
+# sysroot at specified API level,and Android build explicit lists header/lib
+# dependencies.
+#
+# It's better to point --with-sysroot to local directory otherwise the
+# path may be found at compile-time and bad things can happen: eg.
+#  1) The path exists and contain incorrect headers/libs
+#  2) The path exists at remote server and blocks GCC for seconds
+#  3) The path exists but not accessible, which crashes GCC!
+#
+# For canadian build --with-sysroot has to be sub-directory of --prefix.
+# Put TOOLCHAIN_BUILD_PREFIX to BUILD_OUT which is in /tmp by default,
+# and TOOLCHAIN_BUILD_SYSROOT underneath.
+
+TOOLCHAIN_BUILD_PREFIX=$BUILD_OUT/prefix
+TOOLCHAIN_BUILD_SYSROOT=$TOOLCHAIN_BUILD_PREFIX/sysroot
+dump "Sysroot  : Copying: $SYSROOT --> $TOOLCHAIN_BUILD_SYSROOT"
+mkdir -p $TOOLCHAIN_BUILD_SYSROOT && (cd $SYSROOT && tar ch *) | (cd $TOOLCHAIN_BUILD_SYSROOT && tar x)
 if [ $? != 0 ] ; then
     echo "Error while copying sysroot files. See $TMPLOG"
     exit 1
-fi
-
-# For x86, we currently need to force the usage of Android-specific C runtime
-# object files to generate a few target binaries. Ideally, this should be directly
-# handled by the GCC configuration scripts, just like with ARM.
-#
-if [ "$ARCH" = "x86" ]; then
-    ABI_LDFLAGS_FOR_TARGET=" -nostartfiles $TOOLCHAIN_SYSROOT/usr/lib/crtbegin_dynamic.o $TOOLCHAIN_SYSROOT/usr/lib/crtend_android.o"
-    dump "Forcing -nostartfiles: $ABI_LDFLAGS_FOR_TARGET"
 fi
 
 # configure the toolchain
@@ -184,31 +208,52 @@ BUILD_SRCDIR=$SRC_DIR/build
 if [ ! -d $BUILD_SRCDIR ] ; then
     BUILD_SRCDIR=$SRC_DIR
 fi
-rm -rf $BUILD_OUT
 OLD_ABI="${ABI}"
 export CC CXX
 export CFLAGS_FOR_TARGET="$ABI_CFLAGS_FOR_TARGET"
 export CXXFLAGS_FOR_TARGET="$ABI_CXXFLAGS_FOR_TARGET"
-export LDFLAGS_FOR_TARGET="$ABI_LDFLAGS_FOR_TARGET"
 # Needed to build a 32-bit gmp on 64-bit systems
 export ABI=$HOST_GMP_ABI
 # -Wno-error is needed because our gdb-6.6 sources use -Werror by default
 # and fail to build with recent GCC versions.
 export CFLAGS="-Wno-error"
+
+# This extra flag is used to slightly speed up the build
+EXTRA_CONFIG_FLAGS="--disable-bootstrap"
+
+# This is to disable GCC 4.6 specific features that don't compile well
+# the flags are ignored for older GCC versions.
+EXTRA_CONFIG_FLAGS=$EXTRA_CONFIG_FLAGS" --disable-libquadmath --disable-plugin"
+
+# Enable OpenMP
+#EXTRA_CONFIG_FLAGS=$EXTRA_CONFIG_FLAGS" --enable-libgomp"
+
+# Enable Gold
+# mingw misses some header preventing fcntl() in gold to compile.  Disable it for now.
+if [ "$MINGW" != "yes" ] ; then
+    case "$TOOLCHAIN" in
+    x86-4.6|arm-linux-androideabi-4.6)
+        EXTRA_CONFIG_FLAGS=$EXTRA_CONFIG_FLAGS" --enable-gold --enable-ld=default"
+    ;;
+    esac
+fi
+
 #export LDFLAGS="$HOST_LDFLAGS"
-mkdir -p $BUILD_OUT && cd $BUILD_OUT && run \
+cd $BUILD_OUT && run \
 $BUILD_SRCDIR/configure --target=$ABI_CONFIGURE_TARGET \
                         --enable-initfini-array \
                         --host=$ABI_CONFIGURE_HOST \
                         --build=$ABI_CONFIGURE_BUILD \
                         --disable-nls \
-                        --prefix=$TOOLCHAIN_PATH \
-                        --with-sysroot=$TOOLCHAIN_SYSROOT \
+                        --prefix=$TOOLCHAIN_BUILD_PREFIX \
+                        --with-sysroot=$TOOLCHAIN_BUILD_SYSROOT \
                         --with-binutils-version=$BINUTILS_VERSION \
                         --with-mpfr-version=$MPFR_VERSION \
+                        --with-mpc-version=$MPC_VERSION \
                         --with-gmp-version=$GMP_VERSION \
                         --with-gcc-version=$GCC_VERSION \
                         --with-gdb-version=$GDB_VERSION \
+                        $EXTRA_CONFIG_FLAGS \
                         $ABI_CONFIGURE_EXTRA_FLAGS
 if [ $? != 0 ] ; then
     dump "Error while trying to configure toolchain build. See $TMPLOG"
@@ -247,6 +292,20 @@ if [ $? != 0 ] ; then
     echo "Error while installing toolchain. See $TMPLOG"
     exit 1
 fi
+
+# copy to toolchain path
+run copy_directory "$TOOLCHAIN_BUILD_PREFIX" "$TOOLCHAIN_PATH"
+
+if [ "$MINGW" = "yes" ] ; then
+    # For some reasons, libraries in $ABI_CONFIGURE_TARGET (*) are not installed.
+    # Hack here to copy them over.
+    # (*) FYI: libgcc.a and libgcov.a not installed there in the first place
+    INSTALL_TARGET_LIB_PATH="$BUILD_OUT/host-$ABI_CONFIGURE_BUILD/install/$ABI_CONFIGURE_TARGET/lib"
+    TOOLCHAIN_TARGET_LIB_PATH="$TOOLCHAIN_PATH/$ABI_CONFIGURE_TARGET/lib"
+    (cd "$INSTALL_TARGET_LIB_PATH" &&
+        find . \( -name "*.a" -o -name "*.la" -o -name "*.spec" \) -exec install -D "{}" "$TOOLCHAIN_TARGET_LIB_PATH/{}" \;)
+fi
+
 # don't forget to copy the GPL and LGPL license files
 run cp -f $TOOLCHAIN_LICENSES/COPYING $TOOLCHAIN_LICENSES/COPYING.LIB $TOOLCHAIN_PATH
 
@@ -261,6 +320,7 @@ run rm -rf $TOOLCHAIN_PATH/libexec/gcc/$ABI_CONFIGURE_TARGET/*/install-tools
 run rm -rf $TOOLCHAIN_PATH/lib32/libiberty.a
 run rm -rf $TOOLCHAIN_PATH/$ABI_CONFIGURE_TARGET/lib/libiberty.a
 run rm -rf $TOOLCHAIN_PATH/$ABI_CONFIGURE_TARGET/lib/*/libiberty.a
+run rm -rf $TOOLCHAIN_PATH/$ABI_CONFIGURE_TARGET/lib/*/*/libiberty.a
 
 # Remove libstdc++ for now (will add it differently later)
 # We had to build it to get libsupc++ which we keep.

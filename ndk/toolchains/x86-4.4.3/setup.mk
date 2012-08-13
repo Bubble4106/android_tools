@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 
-# this file is used to prepare the NDK to build with the x86-4.4.3
+# this file is used to prepare the NDK to build with the x86 gcc-4.4.3
 # toolchain any number of source files
 #
 # its purpose is to define (or re-define) templates used to build
@@ -24,7 +24,7 @@
 #
 
 TOOLCHAIN_NAME   := x86-4.4.3
-TOOLCHAIN_PREFIX := $(TOOLCHAIN_PREBUILT_ROOT)/bin/i686-android-linux-
+TOOLCHAIN_PREFIX := $(TOOLCHAIN_PREBUILT_ROOT)/bin/i686-linux-android-
 
 TARGET_CFLAGS := \
     -ffunction-sections \
@@ -78,12 +78,7 @@ $(PRIVATE_CXX) \
     -Wl,-soname,$(notdir $@) \
     -shared \
     --sysroot=$(call host-path,$(PRIVATE_SYSROOT)) \
-    $(call host-path, $(PRIVATE_OBJECTS)) \
-    $(call link-whole-archives,$(PRIVATE_WHOLE_STATIC_LIBRARIES)) \
-    $(call host-path,\
-        $(PRIVATE_STATIC_LIBRARIES) \
-        $(PRIVATE_LIBGCC) \
-        $(PRIVATE_SHARED_LIBRARIES)) \
+    $(PRIVATE_LINKER_OBJECTS_AND_LIBRARIES) \
     $(PRIVATE_LDFLAGS) \
     $(PRIVATE_LDLIBS) \
     -o $(call host-path,$@)
@@ -94,12 +89,7 @@ $(PRIVATE_CXX) \
     -Wl,--gc-sections \
     -Wl,-z,nocopyreloc \
     --sysroot=$(call host-path,$(PRIVATE_SYSROOT)) \
-    $(call host-path, $(PRIVATE_OBJECTS)) \
-    $(call link-whole-archives,$(PRIVATE_WHOLE_STATIC_LIBRARIES)) \
-    $(call host-path,\
-        $(PRIVATE_STATIC_LIBRARIES) \
-        $(PRIVATE_LIBGCC) \
-        $(PRIVATE_SHARED_LIBRARIES)) \
+    $(PRIVATE_LINKER_OBJECTS_AND_LIBRARIES) \
     $(PRIVATE_LDFLAGS) \
     $(PRIVATE_LDLIBS) \
     -o $(call host-path,$@)

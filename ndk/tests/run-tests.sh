@@ -75,7 +75,7 @@ while [ -n "$1" ]; do
         --full)
             FULL_TESTS=yes;
             ;;
-        --test=*)
+        --test=*)  # Deprecated, but keep it just in case.
             RUN_TESTS="$RUN_TESTS $optarg"
             ;;
         --package=*)
@@ -110,27 +110,25 @@ while [ -n "$1" ]; do
             echo "ERROR: Unknown option '$opt', use --help for list of valid ones."
             exit 1
         ;;
-        *)  # Simply record parameter
-            if [ -z "$PARAMETERS" ] ; then
-                PARAMETERS="$opt"
-            else
-                PARAMETERS="$PARAMETERS $opt"
-            fi
+        *)  # Simply record new test name
+            RUN_TESTS=$RUN_TESTS" $opt"
             ;;
     esac
     shift
 done
 
 if [ "$OPTION_HELP" = "yes" ] ; then
-    echo "Usage: $PROGNAME [options]"
+    echo "Usage: $PROGNAME [options] [testname1 [testname2...]]"
     echo ""
-    echo "Run all NDK automated tests at once."
+    echo "Run NDK automated tests. Without any parameter, this will try to"
+    echo "run all standard tests, except those are tagged broken. You can"
+    echo "also select/enforce specific tests by listing their name on the"
+    echo "command-line."
     echo ""
     echo "Valid options:"
     echo ""
     echo "    --help|-h|-?      Print this help"
-    echo "    --verbose         Enable verbose mode"
-    echo "    --test=<name>     Run selected test (all if not used)"
+    echo "    --verbose         Enable verbose mode (can be used several times)"
     echo "    --ndk=<path>      Path to NDK to test [$ROOTDIR]"
     echo "    --package=<path>  Path to NDK package to test"
     echo "    -j<N> --jobs=<N>  Launch parallel builds [$JOBS]"
@@ -146,15 +144,14 @@ if [ "$OPTION_HELP" = "yes" ] ; then
     echo ""
     echo "NOTE: You cannot use --ndk and --package at the same time."
     echo ""
-    echo "You can use --test=<name> several times to run several tests"
-    echo "during the same invokation."
     exit 0
 fi
 
 # Run a command in ADB.
 #
 # This is needed because "adb shell" does not return the proper status
-# of the launched command, so we need to
+# of the launched command, so we need to add it to the output, and grab
+# it after that.
 #
 adb_cmd ()
 {
@@ -228,16 +225,16 @@ is_testable () {
 # $1: test path
 if [ -n "$RUN_TESTS" ] ; then
     is_buildable () {
-        test -f $1/jni/Android.mk &&
+        [ -f $1/build.sh -o -f $1/jni/Android.mk ] &&
         var_list_contains RUN_TESTS "`basename $1`"
     }
 elif [ "$FULL_TESTS" = "yes" ] ; then
     is_buildable () {
-        test -f $1/jni/Android.mk
+        [ -f $1/build.sh -o -f $1/jni/Android.mk ]
     }
 else # !FULL_TESTS
     is_buildable () {
-        test -f $1/jni/Android.mk || return 1
+        [ -f $1/build.sh -o -f $1/jni/Android.mk ] || return 1
         ! var_list_contains LONG_TESTS "`basename $1`" || return 1
     }
 fi # !FULL_TESTS
@@ -370,7 +367,7 @@ NDK_BUILD_FLAGS="-B"
 case $ABI in
     armeabi|armeabi-v7a)
         ;;
-    x86)
+    x86|mips)
         NDK_BUILD_FLAGS="$NDK_BUILD_FLAGS APP_ABI=$ABI"
         ;;
     *)
@@ -402,13 +399,22 @@ build_project ()
 {
     local NAME=`basename $1`
     local DIR="$BUILD_DIR/$NAME"
-    if [ -f "$1/BROKEN_BUILD" ] ; then
+    if [ -f "$1/BROKEN_BUILD" -a -z "$RUN_TESTS" ] ; then
         echo "Skipping $1: (build)"
         return 0
     fi
     rm -rf "$DIR" && cp -r "$1" "$DIR"
     (cd "$DIR" && run_ndk_build $NDK_BUILD_FLAGS)
-    if [ $? != 0 ] ; then
+    RET=$?
+    if [ -f "$1/BUILD_SHOULD_FAIL" ]; then
+        if [ $RET = 0 ]; then
+            echo "!!! FAILURE: BUILD SHOULD HAVE FAILED [$1]"
+            exit 1
+        fi
+        log "!!! SUCCESS: BUILD FAILED AS EXPECTED [$(basename $1)]"
+        RET=0
+    fi
+    if [ $RET != 0 ] ; then
         echo "!!! BUILD FAILURE [$1]!!! See $NDK_LOGFILE for details or use --verbose option!"
         exit 1
     fi
@@ -474,7 +480,7 @@ if is_testable build; then
         echo "Building NDK build test: `basename $1`"
         if [ -f $1/build.sh ]; then
             export NDK
-            run $1/build.sh "$NDK_BUILD_FLAGS"
+            run $1/build.sh $NDK_BUILD_FLAGS
             if [ $? != 0 ]; then
                 echo "!!! BUILD FAILURE [$1]!!! See $NDK_LOGFILE for details or use --verbose option!"
                 exit 1
@@ -499,8 +505,9 @@ fi
 if is_testable device; then
     build_device_test ()
     {
-        # Do not build test if BROKEN_BUILD is defined
-        if [ -f "$1/BROKEN_BUILD" ] ; then
+        # Do not build test if BROKEN_BUILD is defined, except if we
+        # Have listed the test explicitely.
+        if [ -f "$1/BROKEN_BUILD" -a -z "$RUN_TESTS" ] ; then
             echo "Skipping broken device test build: `basename $1`"
             return 0
         fi
@@ -518,14 +525,16 @@ if is_testable device; then
         local PROGRAM
         # Do not run the test if BROKEN_RUN is defined
         if [ -f "$1/BROKEN_RUN" -o -f "$1/BROKEN_BUILD" ] ; then
-            dump "Skipping NDK device test run: `basename $1`"
-            return 0
+	    if [ -z "$RUN_TESTS" ]; then
+		dump "Skipping NDK device test run: `basename $1`"
+		return 0
+	    fi
         fi
         if [ ! -d "$SRCDIR" ]; then
             dump "Skipping NDK device test run (no $ABI binaries): `basename $1`"
             return 0
         fi
-        # First, copy all files to /data/local, except for gdbserver
+        # First, copy all files to the device, except for gdbserver
         # or gdb.setup.
         adb_cmd_mkdir $DSTDIR
         for SRCFILE in `ls $SRCDIR`; do
@@ -533,8 +542,12 @@ if is_testable device; then
             if [ "$DSTFILE" = "gdbserver" -o "$DSTFILE" = "gdb.setup" ] ; then
                 continue
             fi
+            SRCFILE="$SRCDIR/$SRCFILE"
+            if [ $HOST_OS = cygwin ]; then
+                SRCFILE=`cygpath -m $SRCFILE`
+            fi
             DSTFILE="$DSTDIR/$DSTFILE"
-            run $ADB_CMD push "$SRCDIR/$SRCFILE" "$DSTFILE" &&
+            run $ADB_CMD push "$SRCFILE" "$DSTFILE" &&
             run $ADB_CMD shell chmod 0755 $DSTFILE
             if [ $? != 0 ] ; then
                 dump "ERROR: Could not install $SRCFILE to device!"
@@ -596,7 +609,7 @@ if is_testable device; then
         for DIR in `ls -d $ROOTDIR/tests/device/*`; do
             log "Running device test: $DIR"
             if is_buildable $DIR; then
-                run_device_test $DIR /data/local
+                run_device_test $DIR /data/local/tmp
             fi
         done
     fi
