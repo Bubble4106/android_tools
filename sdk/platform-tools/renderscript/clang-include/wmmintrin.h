@@ -24,13 +24,11 @@
 #ifndef _WMMINTRIN_H
 #define _WMMINTRIN_H
 
-#include <emmintrin.h>
-
-#if !defined (__AES__) && !defined (__PCLMUL__)
-# error "AES/PCLMUL instructions not enabled"
+#if !defined (__AES__)
+# error "AES instructions not enabled"
 #else
 
-#ifdef __AES__
+#include <xmmintrin.h>
 
 static __inline__ __m128i __attribute__((__always_inline__, __nodebug__))
 _mm_aesenc_si128(__m128i __V, __m128i __R)
@@ -66,14 +64,4 @@ _mm_aesimc_si128(__m128i __V)
   __builtin_ia32_aeskeygenassist128((C), (R))
 
 #endif /* __AES__ */
-
-#ifdef __PCLMUL__
-
-#define _mm_clmulepi64_si128(__X, __Y, __I) \
-  ((__m128i)__builtin_ia32_pclmulqdq128((__v2di)(__m128i)(__X), \
-                                        (__v2di)(__m128i)(__Y), (char)(__I)))
-
-#endif /* __PCLMUL__ */
-
-#endif /* __AES__ || __PCLMUL__ */
 #endif /* _WMMINTRIN_H */

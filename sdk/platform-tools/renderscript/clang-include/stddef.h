@@ -43,20 +43,10 @@ typedef __WCHAR_TYPE__ wchar_t;
 
 #undef NULL
 #ifdef __cplusplus
-#  if !defined(__MINGW32__) && !defined(_MSC_VER)
-#    define NULL __null
-#  else
-#    define NULL 0
-#  endif
+#undef __null  // VC++ hack.
+#define NULL __null
 #else
-#  define NULL ((void*)0)
-#endif
-
-#ifdef __cplusplus
-#if defined(_MSC_EXTENSIONS) && defined(_NATIVE_NULLPTR_SUPPORTED)
-namespace std { typedef decltype(nullptr) nullptr_t; }
-using ::std::nullptr_t;
-#endif
+#define NULL ((void*)0)
 #endif
 
 #define offsetof(t, d) __builtin_offsetof(t, d)

@@ -3,5 +3,4 @@
     android:id="@+id/${detail_name}_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".${DetailName}Activity"
-    tools:ignore="MergeRootFrame" />
+    tools:context=".${DetailName}Activity" />
