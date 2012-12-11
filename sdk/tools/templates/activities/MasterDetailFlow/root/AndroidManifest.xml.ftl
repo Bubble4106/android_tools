@@ -2,17 +2,11 @@
 
     <application>
         <activity android:name=".${CollectionName}Activity"
-            <#if isNewProject>
-            android:label="@string/app_name"
-            <#else>
-            android:label="@string/title_${collection_name}"
-            </#if>
-            <#if buildApi gte 16 && parentActivityClass != "">android:parentActivityName="${parentActivityClass}"</#if>>
+            android:label="@string/title_${collection_name}">
             <#if parentActivityClass != "">
             <meta-data android:name="android.support.PARENT_ACTIVITY"
                 android:value="${parentActivityClass}" />
-            </#if>
-            <#if isLauncher>
+            <#else>
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -21,8 +15,7 @@
         </activity>
 
         <activity android:name=".${DetailName}Activity"
-            android:label="@string/title_${detail_name}"
-            <#if buildApi gte 16>android:parentActivityName=".${CollectionName}Activity"</#if>>
+            android:label="@string/title_${detail_name}">
             <meta-data android:name="android.support.PARENT_ACTIVITY"
                 android:value=".${CollectionName}Activity" />
         </activity>
