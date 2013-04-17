@@ -11,5 +11,13 @@
       },
       'includes': ['../../build/java_prebuilt.gypi'],
     },
+    {
+      'target_name': 'uiautomator_jar',
+      'type': 'none',
+      'variables': {
+        'jar_path': '<(android_sdk)/uiautomator.jar',
+      },
+      'includes': ['../../build/java_prebuilt.gypi'],
+    },
   ],
 }
