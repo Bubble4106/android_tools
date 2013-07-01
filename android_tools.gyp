@@ -4,6 +4,15 @@
 {
   'targets': [
     {
+      'target_name': 'android_java',
+      'type' : 'none',
+      'variables': {
+        'jar_path': '<(android_sdk)/android.jar',
+        'exclude_from_apk': 1,
+      },
+      'includes': ['../../build/java_prebuilt.gypi'],
+    },
+    {
       'target_name': 'android_gcm',
       'type' : 'none',
       'variables': {
