@@ -16,7 +16,7 @@
       'target_name': 'android_gcm',
       'type' : 'none',
       'variables': {
-        'jar_path': 'sdk/extras/google/gcm/gcm-client/dist/gcm.jar',
+        'jar_path': '<(android_sdk_root)/extras/google/gcm/gcm-client/dist/gcm.jar',
       },
       'includes': ['../../build/java_prebuilt.gypi'],
     },
